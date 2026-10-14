@@ -1,0 +1,98 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--term-bg);
+}
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  overflow-x: auto;
+  flex: none;
+}
+
+.tab { display: flex; align-items: center; color: var(--muted); border-right: 1px solid var(--border); }
+.tab.on { background: var(--term-bg); color: var(--term-fg); box-shadow: inset 0 2px 0 var(--accent); }
+.tab button { all: unset; cursor: pointer; padding: 4px 6px; white-space: nowrap; }
+.tab button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab .x { padding: 4px 8px 4px 2px; color: var(--muted); }
+.tab.on .x { color: color-mix(in srgb, var(--term-fg) 60%, transparent); }
+.tab .x:hover { color: var(--danger); }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--quiet); margin-right: 6px; vertical-align: middle; }
+/* Tabs carry their session's state: red = waiting on you, green = Claude working. */
+.tab.waiting { background: var(--waiting-bg); color: var(--text); }
+.tab.waiting .dot { background: var(--waiting); }
+.tab.busy { background: var(--busy-bg); color: var(--text); }
+.tab.busy .dot { background: var(--busy); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+.spacer { flex: 1; }
+.hint { color: var(--muted); padding: 4px 10px; white-space: nowrap; align-self: center; }
+kbd {
+  font: inherit;
+  font-size: 10px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+}
+
+.body { flex: 1; min-height: 0; position: relative; }
+.body:focus { outline: none; }
+.body:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.body app-terminal-view[hidden] { display: none; }
+.empty { color: var(--muted); padding: 12px; margin: 0; font-size: 12px; }
+
+/* Startup overlay: covers the terminal from click until claude's first output */
+.boot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--term-bg) 92%, transparent);
+  color: var(--term-fg);
+  font-size: 12px;
+}
+.boot-title { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; }
+.boot-title.fail { color: var(--danger); }
+.boot-sub { color: color-mix(in srgb, var(--term-fg) 65%, transparent); font-variant-numeric: tabular-nums; }
+.boot button {
+  font: inherit;
+  margin-top: 6px;
+  color: var(--term-fg);
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--term-fg) 35%, transparent);
+  border-radius: 4px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.spin {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  vertical-align: middle;
+  border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+.spin.big { width: 16px; height: 16px; border-width: 2px; margin: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation-duration: 2s; }
+}
+
+.chev { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 10px; font-size: 12px; }
+.chev:hover { color: var(--text); }
+.chev:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.body[hidden] { display: none; }

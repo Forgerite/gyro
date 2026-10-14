@@ -1,0 +1,17 @@
+{
+  "name": "ccdb",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n api,web -c yellow,cyan \"npm run api\" \"npm start --prefix web\"",
+    "api": "node --watch-path=server server/index.mjs",
+    "postinstall": "npm install --prefix web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0",
+    "ws": "^8.22.0"
+  }
+}

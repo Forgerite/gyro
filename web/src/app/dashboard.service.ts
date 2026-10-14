@@ -1,0 +1,216 @@
+import { DestroyRef, Service, inject, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { ChangedFile, CommitInfo, Snapshot, Term } from './model';
+
+const POLL_MS = 3000;
+const PANEL_TAB_KEY = 'ccdb.panelTab';
+const DIFF_MODE_KEY = 'ccdb.diffMode';
+const DOCK_OPEN_KEY = 'ccdb.dockOpen';
+
+export type DiffMode = 'inline' | 'split';
+
+/** The diff viewer's target: one changed file, plus its siblings for next/previous. */
+export interface DiffTarget {
+  path: string;
+  file: string;
+  files: ChangedFile[];
+  /** Set when viewing a commit from the graph; otherwise the working-tree changes. */
+  commit?: CommitInfo;
+  /** Working-tree mode: which side of the index the selected file is shown from. */
+  view?: DiffSide;
+}
+
+export type DiffSide = 'staged' | 'unstaged';
+
+/** Working-tree entries in list order: staged files, then unstaged (a partly staged file is in both). */
+export function workingEntries(files: ChangedFile[]): { file: string; view: DiffSide }[] {
+  return [
+    ...files.filter((f) => f.x !== ' ' && f.x !== '?').map((f) => ({ file: f.path, view: 'staged' as const })),
+    ...files.filter((f) => f.x === '?' || f.y !== ' ').map((f) => ({ file: f.path, view: 'unstaged' as const })),
+  ];
+}
+
+export type PanelTab = 'session' | 'git';
+
+function loadPanelTab(): PanelTab {
+  try {
+    return localStorage.getItem(PANEL_TAB_KEY) === 'git' ? 'git' : 'session';
+  } catch {
+    return 'session';
+  }
+}
+
+@Service()
+export class DashboardService {
+  private readonly http = inject(HttpClient);
+
+  readonly snapshot = signal<Snapshot | null>(null);
+  readonly error = signal<string | null>(null);
+  /** Ticks with each poll so relative times re-render. */
+  readonly now = signal(Date.now());
+
+  /** Worktree path of the terminal tab shown in the dock. */
+  readonly activeTerm = signal<string | null>(null);
+  /** Bumped to ask the active terminal to take keyboard focus. */
+  readonly focusTerm = signal(0);
+  /** Terminals between "user asked" and "claude drew something", keyed by worktree path. */
+  readonly starting = signal<Record<string, Starting>>({});
+
+  /** Which view the worktree panel shows; remembered across worktrees and reloads. */
+  readonly panelTab = signal<PanelTab>(loadPanelTab());
+
+  /** Terminal dock expanded, or collapsed to its tab strip. */
+  readonly dockOpen = signal(load(DOCK_OPEN_KEY) !== 'false');
+
+  setDockOpen(open: boolean): void {
+    this.dockOpen.set(open);
+    save(DOCK_OPEN_KEY, String(open));
+  }
+
+  /** File shown in the diff viewer (covers the tile area); null when closed. */
+  readonly diffView = signal<DiffTarget | null>(null);
+  readonly diffMode = signal<DiffMode>(load(DIFF_MODE_KEY) === 'inline' ? 'inline' : 'split');
+
+  setDiffMode(mode: DiffMode): void {
+    this.diffMode.set(mode);
+    save(DIFF_MODE_KEY, mode);
+  }
+
+  /** Step to the next/previous changed file in the open diff. */
+  stepDiff(delta: number): void {
+    const d = this.diffView();
+    if (!d) return;
+    if (!d.commit) {
+      const list = workingEntries(d.files);
+      const i = list.findIndex((e) => e.file === d.file && e.view === d.view);
+      const next = list[i + delta];
+      if (next) this.diffView.set({ ...d, ...next });
+      return;
+    }
+    const i = d.files.findIndex((f) => f.path === d.file);
+    const next = d.files[i + delta];
+    if (next) this.diffView.set({ ...d, file: next.path });
+  }
+
+  setPanelTab(tab: PanelTab): void {
+    this.panelTab.set(tab);
+    try { localStorage.setItem(PANEL_TAB_KEY, tab); } catch { /* storage unavailable */ }
+  }
+
+  /** Bumped whenever terminals change locally, so slower in-flight snapshots don't resurrect old ones. */
+  private termsVersion = 0;
+
+  constructor() {
+    this.refresh();
+    const id = setInterval(() => this.refresh(), POLL_MS);
+    inject(DestroyRef).onDestroy(() => clearInterval(id));
+  }
+
+  refresh(): void {
+    const version = this.termsVersion;
+    this.http.get<Snapshot>('/api/snapshot').subscribe({
+      next: (s) => {
+        const terms = version === this.termsVersion ? s.terms : (this.snapshot()?.terms ?? s.terms);
+        this.snapshot.set({ ...s, terms });
+        this.error.set(null);
+        this.now.set(Date.now());
+      },
+      error: (e) => this.error.set(e.message ?? 'API unreachable'),
+    });
+  }
+
+  open(action: 'external' | 'code' | 'explorer', path: string, sessionId?: string): void {
+    this.http.post('/api/open', { action, path, sessionId }).subscribe({
+      error: (e) => this.error.set(e.error?.error ?? e.message),
+    });
+  }
+
+  /** Start (or resume) claude in the dock for this worktree, then show and focus it. */
+  startTerm(path: string, sessionId?: string): void {
+    if (this.starting()[path]) return this.showTerm(path);
+    // Show the placeholder tab and overlay right away; the POST and claude's boot happen behind it.
+    this.starting.update((m) => ({ ...m, [path]: { at: Date.now(), resume: !!sessionId } }));
+    this.showTerm(path);
+    this.http.post<{ terms: Term[] }>('/api/terms', { action: 'start', path, sessionId }).subscribe({
+      next: ({ terms }) => {
+        this.setTerms(terms);
+        this.showTerm(path);
+      },
+      error: (e) => {
+        const msg = e.error?.error ?? e.message;
+        this.starting.update((m) => ({ ...m, [path]: { ...m[path], failed: msg } }));
+        this.error.set(msg);
+      },
+    });
+  }
+
+  /** First output from claude (or the start was abandoned): drop the startup indicator. */
+  doneStarting(path: string): void {
+    const st = this.starting()[path];
+    if (!st) return;
+    if (!st.failed) console.info(`[ccdb] claude ready in ${Date.now() - st.at}ms`, path);
+    this.starting.update(({ [path]: _, ...rest }) => rest);
+  }
+
+  /** Bumped after stage/unstage/discard/commit so the Git tab reloads its history and changes. */
+  readonly gitTick = signal(0);
+
+  /** Run a git action in a worktree; resolves with the fresh change list. */
+  gitAction(
+    path: string,
+    body: {
+      action: 'stage' | 'unstage' | 'discard' | 'commit' | 'stageHunk' | 'unstageHunk' | 'fetch' | 'pull' | 'push';
+      files?: string[];
+      all?: boolean;
+      message?: string;
+      /** Hunk actions: which file, which side's diff, which hunk (by index). */
+      file?: string;
+      view?: DiffSide;
+      hunk?: number;
+    },
+  ) {
+    return this.http.post<{ files: ChangedFile[]; note?: string }>('/api/git/action', { path, ...body });
+  }
+
+  /** After a git action: tell the Git tab and the tiles. */
+  gitChanged(): void {
+    this.gitTick.update((n) => n + 1);
+    this.refresh();
+  }
+
+  closeTerm(path: string): void {
+    this.doneStarting(path);
+    this.http.post<{ terms: Term[] }>('/api/terms', { action: 'close', path }).subscribe({
+      next: ({ terms }) => this.setTerms(terms),
+      error: (e) => this.error.set(e.error?.error ?? e.message),
+    });
+  }
+
+  private setTerms(terms: Term[]): void {
+    this.termsVersion++;
+    this.snapshot.update((s) => (s ? { ...s, terms } : s));
+  }
+
+  showTerm(path: string, focus = true): void {
+    this.activeTerm.set(path);
+    if (focus) {
+      this.setDockOpen(true);
+      this.focusTerm.update((n) => n + 1);
+    }
+  }
+}
+
+export interface Starting {
+  at: number;
+  resume: boolean;
+  /** Set when the server refused or failed to start the terminal. */
+  failed?: string;
+}
+
+function load(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function save(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
+}

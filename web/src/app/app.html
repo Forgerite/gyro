@@ -1,0 +1,89 @@
+<div class="shell" [class.dock-closed]="!api.dockOpen()" [style.--dock-h.px]="api.dockOpen() ? dockHeight() : 27">
+  <header class="bar">
+    <h1>ccdb</h1>
+    <input
+      #filterInput
+      type="search"
+      placeholder="Filter  ( / )"
+      aria-label="Filter workspaces"
+      [value]="filter()"
+      (input)="filter.set($any($event.target).value)"
+    />
+    <label class="toggle">
+      <input type="checkbox" [checked]="activeOnly()" (change)="activeOnly.set($any($event.target).checked)" />
+      Active 14d <kbd>a</kbd>
+    </label>
+    <button type="button" class="new-proj" (click)="startCreating()" [attr.aria-pressed]="creating()" title="Start a new git repository in the code folder">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>New project
+    </button>
+    <span class="spacer"></span>
+    @if (api.error(); as err) { <span class="error" role="alert">{{ err }}</span> }
+    <span class="hint"><kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> open/resume · <kbd>u</kbd> up · <kbd>c</kbd> code · <kbd>g</kbd> git</span>
+  </header>
+
+  <main class="grid" aria-label="Workspaces">
+    <div class="cols">
+    @for (ws of workspaces(); track ws.path) {
+      <app-workspace-card
+        [ws]="ws"
+        [now]="now()"
+        [selected]="selected()"
+        (select)="selectWorktree($event)"
+        (selectProject)="selectProject($event)"
+        (activate)="activate($event)"
+        [multi]="multi()"
+        (pickSession)="pickSession($event)"
+        (pickSessions)="multi.set($event)"
+        (activateSession)="selectSession($event); activate()"
+      />
+    } @empty {
+      <p class="empty">{{ api.snapshot() ? 'Nothing matches.' : 'Scanning repositories…' }}</p>
+    }
+    @if (otherSessions().length && !filter()) {
+      <section class="other" aria-label="Sessions outside known worktrees">
+        <h2>Other sessions</h2>
+        @for (s of otherSessions(); track s.id) {
+          <div class="other-row" [title]="s.cwd ?? ''">
+            <span class="dot" [class.live]="s.live"></span>
+            <span class="t">{{ s.title ?? s.id.slice(0, 8) }}</span>
+            <span class="cwd">{{ s.cwd?.split('\\').pop() }}</span>
+            <span class="age">{{ s.lastActivity | ago: now() }}</span>
+          </div>
+        }
+      </section>
+    }
+    </div>
+  </main>
+
+  <app-diff-viewer class="diffv" />
+
+  <aside class="detail" aria-label="Details">
+    @let sel = selection();
+    @if (creating()) {
+      <app-new-project-panel (created)="projectCreated($event)" (cancel)="creating.set(false)" />
+    } @else if (picked().length > 1) {
+      <app-bulk-archive-panel [sessions]="picked()" [now]="now()" (remove)="unpick($event)" (clear)="multi.set([])"
+                              (done)="multi.set([]); selected.set(null)" />
+    } @else if (sel?.kind === 'worktree') {
+      <app-worktree-panel [ws]="sel!.ws" [wt]="sel!.wt!" [term]="selectedTerm()" [now]="now()" (open)="open($event)" (up)="up()" />
+    } @else if (sel?.kind === 'session') {
+      <app-loose-session-panel [ws]="sel!.ws" [session]="sel!.s!" [term]="selectedTerm()" [now]="now()" (open)="open($event)" (up)="up()" />
+    } @else if (sel?.kind === 'project') {
+      <app-project-panel [ws]="sel!.ws" [now]="now()" (open)="open($event)" (pick)="selectWorktree($event)" />
+    } @else {
+      <p class="empty">
+        Click a project name or a worktree. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>↵</kbd> drill in / resume,
+        <kbd>u</kbd> back to project.
+      </p>
+    }
+  </aside>
+
+  <div
+    class="splitter"
+    role="separator"
+    aria-orientation="horizontal"
+    aria-label="Resize terminal"
+    (pointerdown)="startResize($event)"
+  ></div>
+  <app-terminal-dock class="dock" (pick)="pickTerm($event)" />
+</div>

@@ -1,0 +1,59 @@
+:root {
+  color-scheme: dark;
+  --bg: #0d1014;
+  --panel: #151a20;
+  --panel-2: #11151a;
+  --border: #262d36;
+  --hover: #1b222a;
+  --selected: #1d2a3a;
+  --text: #e3e8ee;
+  --text-2: #b4bdc8;
+  --muted: #8591a0;
+  --accent: #6cb6ff;
+  /* Session states: green = Claude is working, red = waiting on you. */
+  --busy: #3fb950;
+  --busy-bg: #1b4a2a;
+  --waiting: #ff6b62;
+  --waiting-bg: #5b1d22;
+  --quiet: #3a434e;
+  --add: #5ccf8e;
+  --dirty: #e7a15c;
+  --danger: #ff7b72;
+  --term-bg: #0b0e12;
+  --term-fg: #d7dde4;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f4f6f8;
+    --panel: #ffffff;
+    --panel-2: #f9fafb;
+    --border: #d9dee4;
+    --hover: #eef2f6;
+    --selected: #dcebfb;
+    --text: #1b2129;
+    --text-2: #3d4753;
+    --muted: #5f6b78;
+    --accent: #0a62c9;
+    --busy: #1a7f37;
+    --busy-bg: #bfeccb;
+    --waiting: #cf222e;
+    --waiting-bg: #ffcbc6;
+    --quiet: #c4ccd5;
+    --add: #17864a;
+    --dirty: #b25d07;
+    --danger: #c62828;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Cascadia Code', 'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+}
