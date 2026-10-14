@@ -111,3 +111,4 @@ h3 .scope { float: right; text-transform: none; letter-spacing: 0; font-weight: 
 .cnt { font-weight: 600; color: var(--accent); }
 .msg { min-height: 16px; font-size: 11px; padding-top: 2px; white-space: pre-line; }
 .note { color: var(--text-2); }
+.msg { display: flex; flex-direction: column; gap: 2px; }

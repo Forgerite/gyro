@@ -191,3 +191,26 @@ button:focus-visible { outline: 2px solid var(--accent); }
 }
 .hunk-act:hover { background: var(--accent); color: #fff; }
 .hunk-act:disabled { opacity: 0.5; cursor: default; }
+
+/* Smart feature: Compose (Claude writes the message and commits) */
+.commit-row { display: flex; gap: 6px; }
+.commit-row .commit-btn { flex: 1; }
+.compose-btn {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font: inherit; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 4px; cursor: pointer;
+  color: var(--accent); background: var(--panel); border: 1px solid var(--accent);
+}
+.compose-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.compose-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.compose-btn svg { width: 13px; height: 13px; fill: currentColor; }
+.compose-btn:focus-visible, .commit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.compose-out { font-size: 11px; color: var(--text-2); overflow-wrap: anywhere; }
+.compose-out.err { color: var(--danger); white-space: pre-wrap; }
+.compose-out .warn { display: block; color: var(--dirty); margin-top: 2px; }
+.spin {
+  display: inline-block; width: 9px; height: 9px; vertical-align: middle;
+  border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2s; } }

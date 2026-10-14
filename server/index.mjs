@@ -285,6 +285,17 @@ const server = createServer(async (req, res) => {
           scan('touch', wt.path).catch(() => {}); // tiles' ●/◆ flags catch up on the next scan
         }
       }
+      if (req.url === '/api/git/compose') {
+        const { path, hint } = await readJson(req);
+        const found = await knownWorktree(path);
+        if (!found) return send(res, 400, { error: 'unknown worktree' });
+        try {
+          return send(res, 200, await detail('composeCommit', { path: found.path, hint: typeof hint === 'string' ? hint.slice(0, 2000) : '' })
+            .catch((e) => { throw httpError(409, e.message); }));
+        } finally {
+          scan('touch', found.path).catch(() => {});
+        }
+      }
       if (req.url === '/api/projects/create') {
         const { mode, name, gitignore } = await readJson(req);
         const result = await detail('createProject', { codeRoot: CODE_ROOT, mode, name, gitignore: gitignore === true })

@@ -3,9 +3,9 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import pty from 'node-pty';
 import { WebSocketServer } from 'ws';
+import { CLAUDE, childEnv } from './claude-env.mjs';
 
 const SCROLLBACK_CHARS = 512 * 1024;
-const CLAUDE = process.platform === 'win32' ? 'claude.exe' : 'claude';
 
 const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
@@ -19,26 +19,6 @@ const terms = new Map();
 function killTree(term) {
   if (process.platform === 'win32') execFile('taskkill', ['/T', '/F', '/PID', String(term.pid)], () => {});
   else term.proc.kill();
-}
-
-/** Variables a running Claude session sets for its children (besides the CLAUDE_CODE_SESSION_/MESSAGING_ families). */
-const SESSION_MARKERS = new Set([
-  'CLAUDECODE',
-  'CLAUDE_CODE_ENTRYPOINT',
-  'CLAUDE_CODE_CHILD_SESSION',
-  'CLAUDE_CODE_EXECPATH',
-  'CLAUDE_PID',
-]);
-
-function childEnv() {
-  const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
-  // If ccdb was launched from inside a Claude session, that session's markers are in our env. Passed on,
-  // they make each dock claude think it's a child of that session (no transcript saving, wrong messaging
-  // socket). Drop them; user settings like CLAUDE_CODE_USE_BEDROCK pass through untouched.
-  for (const key of Object.keys(env)) {
-    if (SESSION_MARKERS.has(key) || /^CLAUDE_CODE_(SESSION|MESSAGING)_/.test(key)) delete env[key];
-  }
-  return env;
 }
 
 export function listTerms() {

@@ -3,8 +3,9 @@
 import { parentPort } from 'node:worker_threads';
 import { gitDetail } from './gitdetail.mjs';
 import { createProject, projectCandidates } from './projects.mjs';
+import { composeCommit } from './compose.mjs';
 
-const ops = { ...gitDetail(async (wt) => wt), createProject, projectCandidates };
+const ops = { ...gitDetail(async (wt) => wt), createProject, projectCandidates, composeCommit };
 
 parentPort.on('message', async ({ id, op, arg }) => {
   try {

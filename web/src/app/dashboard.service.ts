@@ -172,6 +172,31 @@ export class DashboardService {
     return this.http.post<{ files: ChangedFile[]; note?: string }>('/api/git/action', { path, ...body });
   }
 
+  /** Compose commit (Claude writes the message and commits) in flight, by worktree path → start time. */
+  readonly composing = signal<Record<string, number>>({});
+  /** Last compose outcome per worktree, until the next commit attempt there. */
+  readonly composed = signal<Record<string, ComposeOutcome>>({});
+
+  /** Smart feature: hand the staged changes to Claude to describe and commit. `hint` steers the message. */
+  composeCommit(path: string, hint: string): void {
+    if (this.composing()[path]) return;
+    this.composing.update((m) => ({ ...m, [path]: Date.now() }));
+    this.clearComposed(path);
+    const done = (o: ComposeOutcome) => {
+      this.composing.update(({ [path]: _, ...rest }) => rest);
+      this.composed.update((m) => ({ ...m, [path]: o }));
+      this.gitChanged();
+    };
+    this.http.post<ComposeResult>('/api/git/compose', { path, hint }).subscribe({
+      next: (r) => done({ ok: `Committed ${r.commit.short} · ${r.commit.subject}`, warning: r.warning }),
+      error: (e) => done({ error: e.error?.error ?? e.message }),
+    });
+  }
+
+  clearComposed(path: string): void {
+    if (this.composed()[path]) this.composed.update(({ [path]: _, ...rest }) => rest);
+  }
+
   /** After a git action: tell the Git tab and the tiles. */
   gitChanged(): void {
     this.gitTick.update((n) => n + 1);
@@ -198,6 +223,17 @@ export class DashboardService {
       this.focusTerm.update((n) => n + 1);
     }
   }
+}
+
+interface ComposeResult {
+  commit: { h: string; short: string; subject: string };
+  warning: string | null;
+}
+
+export interface ComposeOutcome {
+  ok?: string;
+  warning?: string | null;
+  error?: string;
 }
 
 export interface Starting {

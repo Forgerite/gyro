@@ -56,6 +56,12 @@ type SyncAction = 'fetch' | 'pull' | 'push';
     </div>
     <div class="msg" role="status">
       @if (error()) { <span class="err">{{ error() }}</span> } @else if (note()) { <span class="note">{{ note() }}</span> }
+      @if (composingHere()) {
+        <span class="note">Claude is composing a commit…</span>
+      } @else if (composed(); as o) {
+        <span [class]="o.error ? 'err' : 'note'">{{ o.error ?? o.ok }}</span>
+        @if (o.warning) { <span class="err">{{ o.warning }}</span> }
+      }
     </div>
 
     <section aria-labelledby="gr-h" class="graph">
@@ -128,6 +134,9 @@ export class GitTab {
   /** Network action in flight (one at a time), and the last one's outcome. */
   protected readonly syncing = signal<SyncAction | null>(null);
   protected readonly note = signal<string | null>(null);
+  /** Compose commit (smart feature) running or finished in this worktree. */
+  protected readonly composingHere = computed(() => !!this.api.composing()[this.wt().path]);
+  protected readonly composed = computed(() => this.api.composed()[this.wt().path] ?? null);
   /** Graph scope: this worktree's branch + trunk (default), or every ref in the repo. */
   protected readonly allBranches = signal(false);
 

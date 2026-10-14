@@ -64,14 +64,31 @@ import { ChangedFile } from './model';
 
         @if (!d.commit) {
           <div class="commit-box">
-            <textarea rows="3" placeholder="Commit message" aria-label="Commit message"
+            <textarea rows="3" [placeholder]="composingSince() !== null ? 'Claude is writing the commit…' : 'Commit message (or notes for Compose)'" aria-label="Commit message"
                       [value]="message()" (input)="message.set($any($event.target).value)"
                       (keydown.control.enter)="run('commit', null)"></textarea>
             @if (actionError()) { <div class="act-err" role="alert">{{ actionError() }}</div> }
-            <button type="button" class="commit-btn" (click)="run('commit', null)"
-                    [disabled]="busy() || !staged().length || !message().trim()" title="Commit (Ctrl+Enter)">
-              {{ busy() ? 'Working…' : 'Commit ' + staged().length + ' staged file' + (staged().length === 1 ? '' : 's') }}
-            </button>
+            @if (composeOutcome(); as o) {
+              <div class="compose-out" [class.err]="!!o.error" role="status">
+                {{ o.error ?? o.ok }}
+                @if (o.warning) { <span class="warn">{{ o.warning }}</span> }
+              </div>
+            }
+            <div class="commit-row">
+              <button type="button" class="commit-btn" (click)="run('commit', null)"
+                      [disabled]="busy() || !staged().length || !message().trim()" title="Commit (Ctrl+Enter)">
+                {{ working() ? 'Working…' : 'Commit ' + staged().length + ' staged file' + (staged().length === 1 ? '' : 's') }}
+              </button>
+              <button type="button" class="compose-btn" (click)="compose()" [disabled]="busy() || !staged().length"
+                      title="Claude reads the staged changes, writes the message and commits. Anything typed above is passed along as notes.">
+                @if (composingSince() !== null) {
+                  <span class="spin" aria-hidden="true"></span> Composing… {{ secondsSince(composingSince()!) }}s
+                } @else {
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.4 3.6L13 6.5 9.4 7.9 8 11.5 6.6 7.9 3 6.5l3.6-1.4zM12.5 10.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" /></svg>
+                  Compose
+                }
+              </button>
+            </div>
           </div>
         }
       </nav>
@@ -184,7 +201,28 @@ export class DiffViewer {
   protected readonly staged = computed(() => (this.api.diffView()?.files ?? []).filter((f) => f.x !== ' ' && f.x !== '?'));
   protected readonly unstaged = computed(() => (this.api.diffView()?.files ?? []).filter((f) => f.x === '?' || f.y !== ' '));
   protected readonly confirmDiscard = signal<string[] | null>(null);
-  protected readonly busy = signal(false);
+  /** A stage/unstage/discard/commit request in flight. */
+  private readonly working = signal(false);
+  /** Compose commit running for this worktree: the index must not move under Claude, so actions lock. */
+  protected readonly composingSince = computed(() => {
+    const d = this.api.diffView();
+    return d ? (this.api.composing()[d.path] ?? null) : null;
+  });
+  protected readonly busy = computed(() => this.working() || this.composingSince() !== null);
+  /** Ticks every second while composing, for the elapsed-time readout. */
+  private readonly clock = signal(Date.now());
+  private readonly ticking = effect((onCleanup) => {
+    if (this.composingSince() === null) return;
+    const id = setInterval(() => this.clock.set(Date.now()), 1000);
+    onCleanup(() => clearInterval(id));
+  });
+  protected secondsSince(at: number) {
+    return Math.max(0, Math.round((this.clock() - at) / 1000));
+  }
+  protected readonly composeOutcome = computed(() => {
+    const d = this.api.diffView();
+    return d ? (this.api.composed()[d.path] ?? null) : null;
+  });
   protected readonly actionError = signal<string | null>(null);
   protected readonly message = signal('');
 
@@ -197,8 +235,9 @@ export class DiffViewer {
     const d = this.api.diffView();
     if (!d || d.commit || this.busy()) return;
     if (action === 'commit' && (!this.staged().length || !this.message().trim())) return;
-    this.busy.set(true);
+    this.working.set(true);
     this.actionError.set(null);
+    if (action === 'commit') this.api.clearComposed(d.path);
     const body = { action, ...(files ? { files } : { all: true }), ...(action === 'commit' ? { message: this.message() } : {}) };
     this.api.gitAction(d.path, body).subscribe({
       next: ({ files: now }) => {
@@ -206,10 +245,19 @@ export class DiffViewer {
         this.afterAction(d.path, now);
       },
       error: (e) => {
-        this.busy.set(false);
+        this.working.set(false);
         this.actionError.set(e.error?.error ?? e.message);
       },
     });
+  }
+
+  /** Claude reads the staged diff, writes the message (shaped by anything typed in the box) and commits. */
+  protected compose() {
+    const d = this.api.diffView();
+    if (!d || d.commit || this.busy() || !this.staged().length) return;
+    this.actionError.set(null);
+    this.api.composeCommit(d.path, this.message());
+    this.message.set('');
   }
 
   protected pick(file: string, group: DiffSide | null) {
@@ -221,19 +269,19 @@ export class DiffViewer {
   protected runHunk(action: 'stageHunk' | 'unstageHunk', hunk: number) {
     const d = this.api.diffView();
     if (!d || d.commit || !d.view || this.busy()) return;
-    this.busy.set(true);
+    this.working.set(true);
     this.actionError.set(null);
     this.api.gitAction(d.path, { action, file: d.file, view: d.view, hunk }).subscribe({
       next: ({ files: now }) => this.afterAction(d.path, now),
       error: (e) => {
-        this.busy.set(false);
+        this.working.set(false);
         this.actionError.set(e.error?.error ?? e.message);
       },
     });
   }
 
   private afterAction(path: string, now: ChangedFile[]) {
-    this.busy.set(false);
+    this.working.set(false);
     this.confirmDiscard.set(null);
     const cur = this.api.diffView();
     if (cur && !cur.commit && cur.path === path) {
