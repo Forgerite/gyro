@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -n api,web -c yellow,cyan \"npm run api\" \"npm start --prefix web\"",
+    "dev": "node scripts/dev.mjs",
     "api": "node --watch-path=server server/index.mjs",
     "postinstall": "npm install --prefix web"
   },

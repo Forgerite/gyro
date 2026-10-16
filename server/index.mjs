@@ -14,12 +14,14 @@ import { leasePorts, loadExcludedPorts, portsOf, releasePorts } from './ports.mj
 import { allGyro, finishGyro, gyroBrief, gyroOf, noteGyro, recordGyro, reportStep, startGyro } from './gyro.mjs';
 import { worktreeHome } from './worktrees.mjs';
 import { attachPtySocket, closeTerm, detectDev, findTerm, killAllTerms, listTerms, startDev, startTerm, stopDev } from './pty.mjs';
+import { resolvePorts } from '../scripts/worktree-ports.mjs';
 
-const PORT = Number(process.env.CCDB_PORT ?? 4317);
+const ports = await resolvePorts();
+const PORT = Number(process.env.CCDB_PORT ?? ports.api);
 const CODE_ROOT = resolve(process.env.CCDB_ROOT ?? join(homedir(), 'Documents', 'code'));
 // Browsers send Origin on cross-site POSTs and WebSocket upgrades; anything else is refused.
 const ALLOWED_ORIGINS = new Set(
-  (process.env.CCDB_ORIGINS ?? 'http://localhost:4200,http://127.0.0.1:4200').split(','),
+  (process.env.CCDB_ORIGINS ?? `http://localhost:${ports.web},http://127.0.0.1:${ports.web}`).split(','),
 );
 
 // ---------- workers ----------
