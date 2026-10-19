@@ -1,6 +1,7 @@
 import { DestroyRef, Service, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { ChangedFile, CommitInfo, Snapshot, Term } from './model';
+import { Observable, tap } from 'rxjs';
+import { ChangedFile, CommitInfo, EntryTarget, Snapshot, Term } from './model';
 
 const POLL_MS = 3000;
 const PANEL_TAB_KEY = 'ccdb.panelTab';
@@ -67,6 +68,15 @@ export class DashboardService {
     save(DOCK_OPEN_KEY, String(open));
   }
 
+  /** Board entry open in the detail panel (over whatever is selected); null when closed. */
+  readonly entry = signal<EntryTarget | null>(null);
+  /** Bumped when an entry moves, so boards on screen reload (the server already dropped its cached copy). */
+  readonly boardTick = signal(0);
+
+  boardChanged(): void {
+    this.boardTick.update((n) => n + 1);
+  }
+
   /** File shown in the diff viewer (covers the tile area); null when closed. */
   readonly diffView = signal<DiffTarget | null>(null);
   readonly diffMode = signal<DiffMode>(load(DIFF_MODE_KEY) === 'inline' ? 'inline' : 'split');
@@ -125,13 +135,16 @@ export class DashboardService {
     });
   }
 
-  /** Start (or resume) claude in the dock for this worktree, then show and focus it. */
-  startTerm(path: string, sessionId?: string): void {
+  /**
+   * Start (or resume) claude in the dock for this worktree, then show and focus it. A new session for a
+   * board `entry` opens on that entry: the server fetches it and briefs claude.
+   */
+  startTerm(path: string, sessionId?: string, entry?: string): void {
     if (this.starting()[path]) return this.showTerm(path);
     // Show the placeholder tab and overlay right away; the POST and claude's boot happen behind it.
     this.starting.update((m) => ({ ...m, [path]: { at: Date.now(), resume: !!sessionId } }));
     this.showTerm(path);
-    this.http.post<{ terms: Term[] }>('/api/terms', { action: 'start', path, sessionId }).subscribe({
+    this.http.post<{ terms: Term[] }>('/api/terms', { action: 'start', path, sessionId, ...(entry ? { entry } : {}) }).subscribe({
       next: ({ terms }) => {
         this.setTerms(terms);
         this.showTerm(path);
@@ -142,6 +155,20 @@ export class DashboardService {
         this.error.set(msg);
       },
     });
+  }
+
+  /** Convert a project to Gyro: ccdb's steps run now, then a Claude session starts in a worktree made for it. */
+  convertToGyro(path: string): Observable<{ worktree: string }> {
+    return this.http.post<{ worktree: string; terms: Term[] }>('/api/gyro/convert', { path }).pipe(
+      tap(({ worktree, terms }) => this.termStarted(worktree, terms)),
+    );
+  }
+
+  /** The server started a dock terminal (e.g. a Gyro conversion): take its terminal list and show that one. */
+  termStarted(path: string, terms: Term[]): void {
+    this.setTerms(terms);
+    this.showTerm(path);
+    this.refresh();
   }
 
   /** First output from claude (or the start was abandoned): drop the startup indicator. */
@@ -193,8 +220,53 @@ export class DashboardService {
     });
   }
 
+  /** Auto rebase in flight, by worktree path → start time; and the last outcome per worktree. */
+  readonly rebasing = signal<Record<string, number>>({});
+  readonly rebased = signal<Record<string, RebaseOutcome>>({});
+
+  /** Smart feature: Claude stashes, rebases onto trunk, reapplies the stash and resolves conflicts. */
+  autoRebase(path: string): void {
+    if (this.smartBusy(path)) return;
+    this.rebasing.update((m) => ({ ...m, [path]: Date.now() }));
+    this.clearRebased(path);
+    const done = (o: RebaseOutcome) => {
+      this.rebasing.update(({ [path]: _, ...rest }) => rest);
+      this.rebased.update((m) => ({ ...m, [path]: o }));
+      this.gitChanged();
+    };
+    this.http.post<RebaseResult>('/api/git/rebase', { path }).subscribe({
+      next: (r) => done({ result: r }),
+      error: (e) => done({ error: e.error?.error ?? e.message }),
+    });
+  }
+
+  clearRebased(path: string): void {
+    if (this.rebased()[path]) this.rebased.update(({ [path]: _, ...rest }) => rest);
+  }
+
+  /** A smart feature (compose or rebase) is working in this worktree: other git actions wait. */
+  smartBusy(path: string): boolean {
+    return !!this.composing()[path] || !!this.rebasing()[path];
+  }
+
   clearComposed(path: string): void {
     if (this.composed()[path]) this.composed.update(({ [path]: _, ...rest }) => rest);
+  }
+
+  /** Close a project (kills its dock terminals) or reopen it. Updates the tile right away. */
+  setProjectClosed(path: string, closed: boolean): void {
+    this.snapshot.update((s) => s && { ...s, workspaces: s.workspaces.map((w) => (w.path === path ? { ...w, closed } : w)) });
+    this.http.post<{ terms?: Term[] }>('/api/projects/close', { path, closed }).subscribe({
+      next: ({ terms }) => {
+        if (terms) this.setTerms(terms);
+        for (const p of Object.keys(this.starting())) if (terms && !terms.some((t) => t.path === p)) this.doneStarting(p);
+        this.refresh();
+      },
+      error: (e) => {
+        this.error.set(e.error?.error ?? e.message);
+        this.refresh();
+      },
+    });
   }
 
   /** After a git action: tell the Git tab and the tiles. */
@@ -206,6 +278,14 @@ export class DashboardService {
   closeTerm(path: string): void {
     this.doneStarting(path);
     this.http.post<{ terms: Term[] }>('/api/terms', { action: 'close', path }).subscribe({
+      next: ({ terms }) => this.setTerms(terms),
+      error: (e) => this.error.set(e.error?.error ?? e.message),
+    });
+  }
+
+  /** Restart or stop the dev server beside a dock session. */
+  devServer(path: string, run: boolean): void {
+    this.http.post<{ terms: Term[] }>('/api/terms', { action: run ? 'dev-start' : 'dev-stop', path }).subscribe({
       next: ({ terms }) => this.setTerms(terms),
       error: (e) => this.error.set(e.error?.error ?? e.message),
     });
@@ -228,6 +308,25 @@ export class DashboardService {
 interface ComposeResult {
   commit: { h: string; short: string; subject: string };
   warning: string | null;
+}
+
+export interface RebaseResult {
+  upToDate: boolean;
+  branch: string;
+  trunk: string;
+  commits?: number;
+  moved?: boolean;
+  note?: string;
+  summary?: string | null;
+  /** Whatever ccdb's own checks found wrong afterwards (empty = clean). */
+  problems: string[];
+  backup?: { head: string; wip: string | null };
+  fetchNote?: string | null;
+}
+
+export interface RebaseOutcome {
+  result?: RebaseResult;
+  error?: string;
 }
 
 export interface ComposeOutcome {

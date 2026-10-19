@@ -1,0 +1,77 @@
+:host { display: grid; gap: 4px; }
+.head { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 1px; min-width: 0; }
+h3 { margin: 0; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); white-space: nowrap; }
+.sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.when { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+button { font: inherit; cursor: pointer; }
+button:disabled { cursor: default; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.link { background: none; border: none; padding: 0; color: var(--muted); font-size: 11px; }
+.link:hover:not(:disabled) { color: var(--accent); text-decoration: underline; }
+a { color: var(--accent); }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.err { color: var(--danger); font-size: 11px; }
+.count { color: var(--muted); font-weight: 400; margin-left: 2px; }
+
+ul { list-style: none; margin: 0; padding: 0; }
+.items { display: grid; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); }
+.item {
+  display: grid;
+  grid-template-columns: 12px auto minmax(0, 1fr) auto;
+  grid-template-areas: 'kind num t chip' '. . meta meta';
+  align-items: baseline;
+  column-gap: 6px;
+  padding: 4px 8px;
+}
+.item + .item { border-top: 1px solid var(--border); }
+.item.closed .t { color: var(--muted); }
+.kind { grid-area: kind; color: var(--text-2); font-size: 11px; text-align: center; }
+.num { grid-area: num; font-variant-numeric: tabular-nums; font-size: 11px; }
+.t { grid-area: t; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.t { all: unset; grid-area: t; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+button.t:hover { color: var(--accent); text-decoration: underline; }
+button.t:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chip { grid-area: chip; }
+.meta { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta.wide { grid-area: meta; }
+.meta.wide > * + * { margin-left: 6px; }
+.bad { color: var(--danger); }
+.label { border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; color: var(--text-2); }
+.chip {
+  font-size: 11px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 6px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip:hover { border-color: var(--accent); }
+
+.col { display: grid; gap: 3px; }
+.col-h {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-weight: 600;
+  cursor: pointer;
+}
+.col-h:disabled { cursor: default; color: var(--muted); font-weight: 400; }
+.col-h:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.swatch { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.swatch[data-color='GRAY'] { background: #8b949e; }
+.swatch[data-color='BLUE'] { background: #4493f8; }
+.swatch[data-color='GREEN'] { background: #3fb950; }
+.swatch[data-color='YELLOW'] { background: #d29922; }
+.swatch[data-color='ORANGE'] { background: #db6d28; }
+.swatch[data-color='RED'] { background: #f85149; }
+.swatch[data-color='PINK'] { background: #db61a2; }
+.swatch[data-color='PURPLE'] { background: #a371f7; }
+.more { justify-self: start; }

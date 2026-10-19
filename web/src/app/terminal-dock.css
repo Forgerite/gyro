@@ -24,11 +24,9 @@
 .tab.on .x { color: color-mix(in srgb, var(--term-fg) 60%, transparent); }
 .tab .x:hover { color: var(--danger); }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--quiet); margin-right: 6px; vertical-align: middle; }
-/* Tabs carry their session's state: red = waiting on you, green = Claude working. */
-.tab.waiting { background: var(--waiting-bg); color: var(--text); }
-.tab.waiting .dot { background: var(--waiting); }
-.tab.busy { background: var(--busy-bg); color: var(--text); }
-.tab.busy .dot { background: var(--busy); animation: pulse 1.2s ease-in-out infinite; }
+/* Tabs show their session's state by the dot only (red/green is reserved for the tiles): pulsing = working. */
+.tab.waiting .dot { background: currentColor; }
+.tab.busy .dot { background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.35; } }
 
 .spacer { flex: 1; }
@@ -96,3 +94,30 @@ kbd {
 .chev:hover { color: var(--text); }
 .chev:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .body[hidden] { display: none; }
+
+/* Terminal group on the left, the app it serves on the right. */
+.split { display: grid; grid-template-columns: minmax(0, var(--left, 50%)) 5px minmax(0, 1fr); height: 100%; min-height: 0; }
+.split[hidden] { display: none; }
+.split.solo { grid-template-columns: minmax(0, 1fr); }
+.split.solo .psplit, .split.solo app-preview-pane { display: none; }
+.group { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.terms { flex: 1; min-height: 0; position: relative; }
+.terms app-terminal-view[hidden] { display: none; }
+
+.panes { display: flex; align-items: stretch; flex: none; font-size: 11px; border-bottom: 1px solid color-mix(in srgb, var(--term-fg) 12%, transparent); }
+.panes button { all: unset; cursor: pointer; padding: 3px 10px; color: var(--muted); white-space: nowrap; }
+.panes button:hover { color: var(--term-fg); }
+.panes button[aria-selected='true'] { color: var(--term-fg); box-shadow: inset 0 -2px 0 var(--accent); }
+.panes button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.panes .sub { color: var(--muted); margin-left: 4px; }
+.panes .act { color: var(--muted); }
+.dot.up { background: currentColor; }
+.dot.busy { background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+
+.psplit { background: var(--border); cursor: col-resize; touch-action: none; }
+.psplit:hover, .psplit:focus-visible { background: var(--accent); outline: none; }
+
+.toggle { all: unset; cursor: pointer; padding: 4px 10px; color: var(--muted); align-self: center; white-space: nowrap; }
+.toggle:hover { color: var(--text); }
+.toggle[aria-pressed='true'] { color: var(--text); }
+.toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

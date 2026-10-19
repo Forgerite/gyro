@@ -5,6 +5,8 @@ import { GitTab } from './git-tab';
 import { NgTemplateOutlet } from '@angular/common';
 import { ArchiveResult, TeardownCard } from './teardown-card';
 import { WtFlags } from './wt-flags';
+import { RebaseStatus } from './rebase-status';
+import { PrLine } from './pr-line';
 import { Session, Term, Workspace, Worktree, sessionState } from './model';
 
 export type OpenRequest = {
@@ -19,7 +21,7 @@ export type OpenRequest = {
  */
 @Component({
   selector: 'app-worktree-panel',
-  imports: [AgoPipe, GitTab, WtFlags, TeardownCard, NgTemplateOutlet],
+  imports: [AgoPipe, GitTab, WtFlags, TeardownCard, NgTemplateOutlet, RebaseStatus, PrLine],
   template: `
     @let w = wt();
     <header>
@@ -30,7 +32,17 @@ export type OpenRequest = {
       <div class="git">
         @if (w.git.dirty) { <span class="dirty">● {{ w.git.dirty }} uncommitted</span> }
         @if (w.git.unmerged) { <span class="unmerged" [title]="'vs ' + w.git.trunk">◆ {{ w.git.unmerged }} unmerged</span> }
+        @if (w.ports; as p) {
+          <span class="ports" [title]="'Leased to this worktree. Its processes get CCDB_PORT_BASE=' + p.base + ' and CCDB_PORT_COUNT=' + p.count + '; the dev server also gets PORT=' + p.base + '.'">ports {{ p.base }}–{{ p.base + p.count - 1 }}</span>
+        }
         <span class="acts">
+          @if (canRebase()) {
+            <button type="button" class="act smart" (click)="api.autoRebase(w.path)" [disabled]="api.smartBusy(w.path)"
+                    [title]="'Claude stashes your uncommitted changes, rebases ' + w.branch + ' onto ' + w.git.trunk + ', reapplies them, and resolves any conflicts'">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11M4 13.5a1.5 1.5 0 1 0 0 .01M4 2.5a1.5 1.5 0 1 0 0 .01M12 4.5a1.5 1.5 0 1 0 0 .01M12 6v1.5c0 2-2 2.5-4 2.5H4" /></svg>
+              {{ api.rebasing()[w.path] ? 'Rebasing…' : 'Rebase on ' + w.git.trunk }}
+            </button>
+          }
           <button type="button" class="act" (click)="open.emit({ action: 'code' })" title="Open in VS Code (c)">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4" /></svg>VS Code
           </button>
@@ -39,6 +51,8 @@ export type OpenRequest = {
           </button>
         </span>
       </div>
+      <app-pr-line [wt]="w" [ws]="ws()" />
+      <app-rebase-status [wt]="w" />
       @if (liveCount() > 1) {
         <div class="warn" role="status">{{ liveCount() }} sessions are live in this worktree. Consider closing all but one.</div>
       }
@@ -47,7 +61,7 @@ export type OpenRequest = {
     <div class="tabs" role="tablist" aria-label="Worktree views">
       <button type="button" role="tab" [attr.aria-selected]="tab() === 'session'" (click)="api.setPanelTab('session')">Session</button>
       <button type="button" role="tab" [attr.aria-selected]="tab() === 'git'" (click)="api.setPanelTab('git')" title="Git (g)">
-        Git <app-wt-flags [git]="w.git" />
+        Git <app-wt-flags [git]="w.git" [pr]="w.pr" />
       </button>
     </div>
 
@@ -219,6 +233,11 @@ export class WorktreePanel {
     return !!st && !st.failed;
   });
   protected readonly running = computed(() => this.booting() || (!!this.term() && !this.term()!.exited));
+  /** A branch with a trunk that isn't the trunk branch itself. */
+  protected readonly canRebase = computed(() => {
+    const w = this.wt();
+    return !!w.branch && !w.detached && !!w.git.trunk && w.git.trunk !== w.branch;
+  });
   protected readonly liveCount = computed(() => this.wt().sessions.filter((s) => s.live).length);
 
   /** A session still booting in the dock counts as working. */

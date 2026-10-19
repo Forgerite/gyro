@@ -15,6 +15,8 @@ const RECONNECT_MS = 1500;
 })
 export class TerminalView {
   readonly path = input.required<string>();
+  /** Claude's terminal, or the dev server beside it. */
+  readonly kind = input<'claude' | 'dev'>('claude');
   readonly active = input(false);
   readonly focusTick = input(0);
   /** Claude has drawn something (or exited): the startup overlay can go. */
@@ -79,7 +81,7 @@ export class TerminalView {
   private connect() {
     if (this.disposed) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/api/pty?path=${encodeURIComponent(this.path())}`);
+    const ws = new WebSocket(`${proto}://${location.host}/api/pty?path=${encodeURIComponent(this.path())}${this.kind() === 'dev' ? '&kind=dev' : ''}`);
     this.ws = ws;
     ws.onopen = () => {
       // Server replays its scrollback on attach, so start from a clean screen.

@@ -1,0 +1,86 @@
+app-entry-view { display: flex; flex-direction: column; min-height: 0; min-width: 0; font-size: 12px; }
+app-entry-view header { padding: 10px 12px; border-bottom: 1px solid var(--border); display: grid; gap: 5px; }
+app-entry-view button { font: inherit; cursor: pointer; }
+app-entry-view button:disabled { cursor: default; }
+app-entry-view h2:focus { outline: none; }
+app-entry-view button:focus-visible, app-entry-view a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+app-entry-view a { color: var(--accent); }
+app-entry-view .muted { color: var(--muted); }
+app-entry-view .err { color: var(--danger); font-size: 11px; margin: 0; }
+app-entry-view .link { background: none; border: none; padding: 0; color: var(--accent); font-size: 11px; }
+app-entry-view .link:hover { text-decoration: underline; }
+app-entry-view .crumb { display: flex; gap: 6px; align-items: baseline; font-size: 11px; min-width: 0; white-space: nowrap; overflow: hidden; }
+
+app-entry-view h2 { margin: 0; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere; }
+app-entry-view h2 .kind { color: var(--text-2); font-size: 12px; margin-right: 2px; }
+app-entry-view h2 .num { color: var(--muted); font-weight: 400; }
+app-entry-view .meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--text-2); font-size: 11px; align-items: baseline; }
+app-entry-view .tag { border: 1px solid var(--border); border-radius: 8px; padding: 0 6px; }
+app-entry-view .links { display: flex; gap: 12px; font-size: 11px; }
+
+app-entry-view .flow { display: grid; gap: 6px; margin-top: 4px; padding: 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); }
+app-entry-view .flow-head { display: flex; align-items: center; gap: 8px; }
+app-entry-view .flow-head h3 { flex: 1; margin: 0; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+app-entry-view .step {
+  font-size: 11px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 9px;
+}
+app-entry-view .step:hover:not(:disabled) { border-color: var(--accent); }
+app-entry-view .step.cta { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+app-entry-view .step.cta:hover:not(:disabled) { filter: brightness(1.1); }
+app-entry-view .step:disabled { opacity: 0.5; }
+
+app-entry-view .stages { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+app-entry-view .stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2px 9px;
+}
+app-entry-view .stage:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+app-entry-view .stage.current { color: var(--text); font-weight: 600; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--selected); opacity: 1; }
+app-entry-view .stage:disabled:not(.current) { opacity: 0.5; }
+app-entry-view .swatch { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+app-entry-view .swatch[data-color='GRAY'] { background: #8b949e; }
+app-entry-view .swatch[data-color='BLUE'] { background: #4493f8; }
+app-entry-view .swatch[data-color='GREEN'] { background: #3fb950; }
+app-entry-view .swatch[data-color='YELLOW'] { background: #d29922; }
+app-entry-view .swatch[data-color='ORANGE'] { background: #db6d28; }
+app-entry-view .swatch[data-color='RED'] { background: #f85149; }
+app-entry-view .swatch[data-color='PINK'] { background: #db61a2; }
+app-entry-view .swatch[data-color='PURPLE'] { background: #a371f7; }
+
+app-entry-view .body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 20px; }
+app-entry-view .c-h { margin: 18px 0 6px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+app-entry-view .comment { border: 1px solid var(--border); border-radius: 5px; margin-top: 6px; background: var(--panel); }
+app-entry-view .c-meta { padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--text-2); font-size: 11px; }
+app-entry-view .comment .md { padding: 6px 8px; }
+
+/* GitHub's rendered markdown, in the dashboard's type and colours. */
+app-entry-view .md { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 13px; line-height: 1.5; color: var(--text); overflow-wrap: anywhere; }
+app-entry-view .md > :first-child { margin-top: 0; }
+app-entry-view .md > :last-child { margin-bottom: 0; }
+app-entry-view .md p, app-entry-view .md ul, app-entry-view .md ol, app-entry-view .md pre, app-entry-view .md blockquote, app-entry-view .md table { margin: 0 0 10px; }
+app-entry-view .md h1, app-entry-view .md h2, app-entry-view .md h3, app-entry-view .md h4 { margin: 14px 0 6px; font-size: 14px; line-height: 1.3; }
+app-entry-view .md h1 { font-size: 16px; }
+app-entry-view .md ul, app-entry-view .md ol { padding-left: 22px; }
+app-entry-view .md li + li { margin-top: 2px; }
+app-entry-view .md code { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12px; background: var(--panel-2); border-radius: 3px; padding: 1px 4px; }
+app-entry-view .md pre { background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 8px; overflow-x: auto; }
+app-entry-view .md pre code { background: none; padding: 0; }
+app-entry-view .md blockquote { border-left: 3px solid var(--border); padding-left: 10px; color: var(--text-2); margin-left: 0; }
+app-entry-view .md img { max-width: 100%; height: auto; }
+app-entry-view .md table { border-collapse: collapse; display: block; overflow-x: auto; }
+app-entry-view .md th, app-entry-view .md td { border: 1px solid var(--border); padding: 3px 7px; }
+app-entry-view .md hr { border: none; border-top: 1px solid var(--border); }
+app-entry-view .md input[type='checkbox'] { margin: 0 4px 0 0; vertical-align: middle; }
+app-entry-view .md .task-list-item { list-style: none; }

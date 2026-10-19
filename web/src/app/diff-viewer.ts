@@ -208,7 +208,10 @@ export class DiffViewer {
     const d = this.api.diffView();
     return d ? (this.api.composing()[d.path] ?? null) : null;
   });
-  protected readonly busy = computed(() => this.working() || this.composingSince() !== null);
+  protected readonly busy = computed(() => {
+    const d = this.api.diffView();
+    return this.working() || (!!d && this.api.smartBusy(d.path));
+  });
   /** Ticks every second while composing, for the elapsed-time readout. */
   private readonly clock = signal(Date.now());
   private readonly ticking = effect((onCleanup) => {

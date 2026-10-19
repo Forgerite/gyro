@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const exec = promisify(execFile);
@@ -11,6 +11,13 @@ const exec = promisify(execFile);
 /** Folder names we'll create or convert: plain names only, nothing hidden and no worktree homes. */
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const isWorktreeHome = (name) => /[.-]worktrees$/i.test(name);
+
+/** A new project's Gyro starting point: the ports module and the CLAUDE.md that tells sessions to use it. */
+const TEMPLATES = join(import.meta.dirname, 'templates');
+async function gyroFiles(path, name) {
+  await writeFile(join(path, 'ports.mjs'), await readFile(join(TEMPLATES, 'ports.mjs'), 'utf8'));
+  await writeFile(join(path, 'CLAUDE.md'), (await readFile(join(TEMPLATES, 'CLAUDE.md'), 'utf8')).replace('{{name}}', name));
+}
 
 /** Starter .gitignore: keeps dependency, build and secret files out of the first commit. */
 export const DEFAULT_GITIGNORE = `# Dependencies
@@ -74,8 +81,9 @@ export async function projectCandidates(codeRoot) {
  * scratch: new folder, git init, optional .gitignore, and an initial commit so the branch exists.
  * directory: git init in an existing folder (plus .gitignore if asked); its files stay uncommitted
  * so they can be reviewed and committed from the Git tab.
+ * gyro (scratch only): start it as a Gyro project, with ports.mjs and CLAUDE.md in the first commit.
  */
-export async function createProject({ codeRoot, mode, name, gitignore }) {
+export async function createProject({ codeRoot, mode, name, gitignore, gyro }) {
   checkName(name);
   const path = join(codeRoot, name);
   const notes = [];
@@ -96,6 +104,10 @@ export async function createProject({ codeRoot, mode, name, gitignore }) {
   if (gitignore && !existsSync(ignoreFile)) {
     await writeFile(ignoreFile, DEFAULT_GITIGNORE);
     notes.push('Added a starter .gitignore');
+  }
+  if (mode === 'scratch' && gyro) {
+    await gyroFiles(path, name);
+    notes.push('Added ports.mjs and CLAUDE.md (Gyro project)');
   }
   if (mode === 'scratch') {
     try {

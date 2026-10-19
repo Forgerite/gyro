@@ -1,15 +1,29 @@
 import { Component, DestroyRef, ElementRef, computed, effect, inject, output, signal, untracked, viewChild } from '@angular/core';
 import { DashboardService } from './dashboard.service';
+import { PreviewPane } from './preview-pane';
 import { TerminalView } from './terminal-view';
 import { sessionState } from './model';
 
 /** After this long without output, the overlay says so instead of just spinning. */
 const SLOW_MS = 8000;
+const SPLIT_KEY = 'ccdb.previewSplit';
+const PREVIEW_KEY = 'ccdb.preview';
 
-/** Bottom half of the screen: one tab per embedded claude terminal. */
+function load(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function save(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
+}
+const clampSplit = (f: number) => Math.min(0.8, Math.max(0.2, f));
+
+/**
+ * Bottom of the screen: one tab per dock session. Each is a group, claude plus the project's dev
+ * server, on the left, with the app that dev server serves previewed on the right.
+ */
 @Component({
   selector: 'app-terminal-dock',
-  imports: [TerminalView],
+  imports: [TerminalView, PreviewPane],
   template: `
     <div class="tabs" role="tablist" aria-label="Terminals">
       @for (t of tabs(); track t.path) {
@@ -22,40 +36,90 @@ const SLOW_MS = 8000;
         </div>
       }
       <span class="spacer"></span>
+      @if (current()) {
+        <button type="button" class="toggle" [attr.aria-pressed]="previewOn()" (click)="togglePreview()" title="Show or hide the app preview and test report">Preview</button>
+      }
       <span class="hint"><kbd>Ctrl</kbd>+<kbd>\`</kbd> toggle terminal</span>
       <button type="button" class="chev" (click)="api.setDockOpen(!api.dockOpen())" [attr.aria-expanded]="api.dockOpen()"
               [attr.aria-label]="api.dockOpen() ? 'Collapse terminal' : 'Expand terminal'">{{ api.dockOpen() ? '▾' : '▴' }}</button>
     </div>
     <div class="body" #body tabindex="-1" [hidden]="!api.dockOpen()" aria-label="Terminal">
-      @for (t of tabs(); track t.path) {
-        @if (t.live) {
-          <app-terminal-view
-            [path]="t.path"
-            [active]="t.path === active()"
-            [focusTick]="api.focusTerm()"
-            [hidden]="t.path !== active()"
-            (ready)="api.doneStarting(t.path)"
-          />
-        }
-      } @empty {
+      @if (!tabs().length) {
         <p class="empty">No terminal open. Select a worktree and press <kbd>Enter</kbd> to resume its session here.</p>
       }
-
-      @if (boot(); as b) {
-        <div class="boot" role="status" aria-live="polite">
-          @if (b.failed) {
-            <div class="boot-title fail">Couldn't start Claude</div>
-            <div class="boot-sub">{{ b.failed }}</div>
-            <button type="button" (click)="api.closeTerm(b.path)">Dismiss</button>
-          } @else {
-            <div class="boot-title"><span class="spin big" aria-hidden="true"></span>{{ b.resume ? 'Resuming session' : 'Starting Claude' }}</div>
-            <div class="boot-sub">
-              {{ b.label }} · {{ b.seconds }}s
-              @if (b.slow) { · still waiting for Claude to draw… }
+      <div class="split" [class.solo]="!previewShown()" [style.--left]="split() * 100 + '%'" [hidden]="!tabs().length">
+        <div class="group">
+          @if (current()?.devCommand; as cmd) {
+            <div class="panes" role="tablist" aria-label="Session terminals">
+              <button type="button" role="tab" [attr.aria-selected]="pane() === 'claude'" (click)="showPane('claude')">Claude</button>
+              <button type="button" role="tab" [attr.aria-selected]="pane() === 'dev'" (click)="showPane('dev')">
+                <span class="dot" [class]="'dot ' + devState()" aria-hidden="true"></span>{{ cmd }}
+                <span class="sub">{{ devText() }}</span>
+              </button>
+              <span class="spacer"></span>
+              @if (current()!.dev && !current()!.dev!.exited) {
+                <button type="button" class="act" (click)="api.devServer(current()!.path, false)">Stop</button>
+              } @else {
+                <button type="button" class="act" (click)="api.devServer(current()!.path, true)">{{ current()!.dev ? 'Restart' : 'Start' }}</button>
+              }
             </div>
           }
+          <div class="terms">
+            @for (t of tabs(); track t.path) {
+              @if (t.live) {
+                <app-terminal-view
+                  [path]="t.path"
+                  [active]="t.path === active() && pane() === 'claude'"
+                  [focusTick]="api.focusTerm()"
+                  [hidden]="t.path !== active() || pane() !== 'claude'"
+                  (ready)="api.doneStarting(t.path)"
+                />
+              }
+              @if (t.dev) {
+                <app-terminal-view
+                  kind="dev"
+                  [path]="t.path"
+                  [active]="t.path === active() && pane() === 'dev'"
+                  [focusTick]="api.focusTerm()"
+                  [hidden]="t.path !== active() || pane() !== 'dev'"
+                />
+              }
+            }
+
+            @if (boot(); as b) {
+              <div class="boot" role="status" aria-live="polite">
+                @if (b.failed) {
+                  <div class="boot-title fail">Couldn't start Claude</div>
+                  <div class="boot-sub">{{ b.failed }}</div>
+                  <button type="button" (click)="api.closeTerm(b.path)">Dismiss</button>
+                } @else {
+                  <div class="boot-title"><span class="spin big" aria-hidden="true"></span>{{ b.resume ? 'Resuming session' : 'Starting Claude' }}</div>
+                  <div class="boot-sub">
+                    {{ b.label }} · {{ b.seconds }}s
+                    @if (b.slow) { · still waiting for Claude to draw… }
+                  </div>
+                }
+              </div>
+            }
+          </div>
         </div>
-      }
+        <div
+          class="psplit"
+          role="separator"
+          tabindex="0"
+          aria-orientation="vertical"
+          aria-label="Resize preview"
+          aria-controls="dock-preview"
+          [attr.aria-valuenow]="round(split() * 100)"
+          aria-valuemin="20"
+          aria-valuemax="80"
+          title="Drag to resize · double-click to split evenly"
+          (pointerdown)="startResize($event)"
+          (dblclick)="setSplit(0.5)"
+          (keydown)="splitKey($event)"
+        ></div>
+        <app-preview-pane id="dock-preview" [tabs]="tabs()" [active]="active()" (showOutput)="showPane('dev')" />
+      </div>
     </div>
   `,
   styleUrl: './terminal-dock.css',
@@ -94,9 +158,10 @@ export class TerminalDock {
     const tabs = terms.map((t) => ({
       path: t.path, exited: t.exited, live: true, label: names.get(t.path) ?? t.path,
       state: t.exited ? 'none' : (states.get(t.path) ?? 'waiting'),
+      devCommand: t.devCommand ?? null, dev: t.dev ?? null,
     }));
     for (const path of Object.keys(this.api.starting())) {
-      if (!terms.some((t) => t.path === path)) tabs.push({ path, exited: false, live: false, label: names.get(path) ?? path, state: 'busy' });
+      if (!terms.some((t) => t.path === path)) tabs.push({ path, exited: false, live: false, label: names.get(path) ?? path, state: 'busy', devCommand: null, dev: null });
     }
     return tabs;
   });
@@ -107,6 +172,69 @@ export class TerminalDock {
     const tabs = this.tabs();
     return tabs.some((t) => t.path === want) ? want : (tabs[0]?.path ?? null);
   });
+
+  protected readonly current = computed(() => this.tabs().find((t) => t.path === this.active()) ?? null);
+
+  /** Left pane: claude, or the dev server's output. Only sessions with a dev server have the choice. */
+  private readonly chosenPane = signal<'claude' | 'dev'>('claude');
+  protected readonly pane = computed(() => (this.current()?.dev ? this.chosenPane() : 'claude'));
+  protected readonly devState = computed(() => {
+    const d = this.current()?.dev;
+    return !d || d.exited ? 'none' : d.url ? 'up' : 'busy';
+  });
+  protected readonly devText = computed(() => {
+    const d = this.current()?.dev;
+    if (!d) return 'not running';
+    if (d.exited) return 'stopped';
+    return d.url ? d.url.replace(/^https?:\/\/[^:/]+/, '').replace(/\/$/, '') || 'up' : 'starting…';
+  });
+
+  protected showPane(p: 'claude' | 'dev'): void {
+    this.chosenPane.set(p);
+    this.api.focusTerm.update((n) => n + 1);
+  }
+
+  /** The preview (the app, or its test report) takes the right part of the dock. */
+  protected readonly previewOn = signal(load(PREVIEW_KEY) !== 'false');
+  protected readonly previewShown = computed(() => this.previewOn() && !!this.current());
+  protected readonly split = signal(clampSplit(Number(load(SPLIT_KEY)) || 0.5));
+  protected readonly round = Math.round;
+
+  protected togglePreview(): void {
+    this.previewOn.update((on) => !on);
+    save(PREVIEW_KEY, String(this.previewOn()));
+  }
+
+  protected setSplit(f: number): void {
+    this.split.set(clampSplit(f));
+    save(SPLIT_KEY, String(this.split()));
+  }
+
+  /** Drag the line between terminal and preview. Captures the pointer so the page in the frame can't swallow it. */
+  protected startResize(e: PointerEvent): void {
+    if (e.button !== 0) return;
+    const handle = e.target as HTMLElement;
+    const box = handle.parentElement!.getBoundingClientRect();
+    handle.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => this.split.set(clampSplit((ev.clientX - box.left) / box.width));
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      this.setSplit(this.split());
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+  }
+
+  protected splitKey(e: KeyboardEvent): void {
+    const step = e.shiftKey ? 0.1 : 0.05;
+    const by = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+    if (by) this.setSplit(this.split() + by);
+    else if (e.key === 'Home' || e.key === 'End') this.setSplit(e.key === 'Home' ? 0.2 : 0.8);
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
 
   /** Startup overlay for the active tab, if it is still booting. */
   protected readonly boot = computed(() => {

@@ -3,6 +3,7 @@ import { Component, ElementRef, computed, inject, output, signal, viewChild } fr
 import { FormField, form, pattern, required, validate } from '@angular/forms/signals';
 import { AgoPipe } from './ago.pipe';
 import { DashboardService } from './dashboard.service';
+import { Term } from './model';
 
 type Mode = 'scratch' | 'directory';
 
@@ -89,6 +90,16 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
           }
         </span>
       </label>
+      <label class="check">
+        <input type="checkbox" [checked]="gyro()" (change)="gyro.set($any($event.target).checked)" />
+        <span>
+          Make it a Gyro project
+          <span class="muted">
+            @if (mode() === 'scratch') { (adds ports.mjs and a CLAUDE.md Ports note, so every worktree gets its own ports) }
+            @else { (then Claude checks it and sets up the dev command and per-worktree ports where they're missing) }
+          </span>
+        </span>
+      </label>
       @if (warnNodeModules()) {
         <p class="warn" role="status">This folder has node_modules. Keep the .gitignore on, or thousands of files will show as changes.</p>
       }
@@ -115,6 +126,7 @@ export class NewProjectPanel {
 
   protected readonly mode = signal<Mode>('scratch');
   protected readonly gitignore = signal(true);
+  protected readonly gyro = signal(true);
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);
 
@@ -181,10 +193,13 @@ export class NewProjectPanel {
     const name = mode === 'scratch' ? this.nameForm.name().value().trim() : this.picked()!;
     this.busy.set(true);
     this.error.set(null);
-    this.http.post<{ path: string; notes: string[] }>('/api/projects/create', { mode, name, gitignore: this.gitignore() }).subscribe({
-      next: ({ path }) => {
+    const body = { mode, name, gitignore: this.gitignore(), gyro: this.gyro() };
+    this.http.post<{ path: string; notes: string[]; worktree?: string; terms?: Term[] }>('/api/projects/create', body).subscribe({
+      next: ({ path, worktree, terms }) => {
         this.busy.set(false);
-        this.api.refresh();
+        // A folder made into a Gyro project: its conversion session is already running.
+        if (worktree && terms) this.api.termStarted(worktree, terms);
+        else this.api.refresh();
         this.created.emit({ path, mode });
       },
       error: (e) => {

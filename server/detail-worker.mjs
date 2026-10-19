@@ -4,8 +4,10 @@ import { parentPort } from 'node:worker_threads';
 import { gitDetail } from './gitdetail.mjs';
 import { createProject, projectCandidates } from './projects.mjs';
 import { composeCommit } from './compose.mjs';
+import { autoRebase } from './rebase.mjs';
+import { createWorktree, worktreeBases } from './worktrees.mjs';
 
-const ops = { ...gitDetail(async (wt) => wt), createProject, projectCandidates, composeCommit };
+const ops = { ...gitDetail(async (wt) => wt), createProject, projectCandidates, composeCommit, autoRebase, createWorktree, worktreeBases };
 
 parentPort.on('message', async ({ id, op, arg }) => {
   try {

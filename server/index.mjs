@@ -2,11 +2,18 @@
 // The main thread only does HTTP, WebSockets and terminals; scanning lives in scanner.mjs (a worker).
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
-import { attachPtySocket, closeTerm, findTerm, killAllTerms, listTerms, startTerm } from './pty.mjs';
+import { getDev, getGithub, isClosed, setClosed, setDev, setGithub } from './state.mjs';
+import { entryBrief, githubOptions, moveEntry, openPulls, projectBoard, projectEntry, resolveLink } from './github.mjs';
+import { findReports, serveReport } from './reports.mjs';
+import { leasePorts, loadExcludedPorts, portsOf, releasePorts } from './ports.mjs';
+import { allGyro, finishGyro, gyroBrief, gyroOf, noteGyro, recordGyro, reportStep, startGyro } from './gyro.mjs';
+import { worktreeHome } from './worktrees.mjs';
+import { attachPtySocket, closeTerm, detectDev, findTerm, killAllTerms, listTerms, startDev, startTerm, stopDev } from './pty.mjs';
 
 const PORT = Number(process.env.CCDB_PORT ?? 4317);
 const CODE_ROOT = resolve(process.env.CCDB_ROOT ?? join(homedir(), 'Documents', 'code'));
@@ -60,8 +67,89 @@ async function snapshot() {
     }
   }
   for (const s of snap.unmatched) looseIds.set(s.id, s);
-  return { ...snap, terms: listTerms() };
+  const gyro = allGyro();
+  const workspaces = snap.workspaces.map((ws) =>
+    withGithub({ ...ws, gyro: gyro.get(norm(ws.path)) ?? null, worktrees: ws.worktrees.map((wt) => ({ ...wt, ports: portsOf(wt.path) })), closed: isClosed(ws.path), dev: { command: getDev(ws.path) ?? null, detected: detectDev(ws.path) } }),
+  );
+  return { ...snap, workspaces, terms: listTerms() };
 }
+
+// ---------- GitHub (cached; gh calls never hold up a snapshot) ----------
+
+const PULLS_TTL = 2 * 60_000;
+const BOARD_TTL = 60_000;
+/** repo (lowercase) -> { at, list, error, pending } */
+const pullsCache = new Map();
+/** "owner/number" -> { at, board, pending } */
+const boardCache = new Map();
+
+/** Cached open PRs of `repo`, kicking off a refetch in the background when they're stale. */
+function pullsFor(repo, force = false) {
+  const key = repo.toLowerCase();
+  const c = pullsCache.get(key) ?? { at: 0, list: null, error: null, pending: null };
+  pullsCache.set(key, c);
+  if ((force || Date.now() - c.at > PULLS_TTL) && !c.pending) {
+    c.pending = openPulls(repo)
+      .then((list) => Object.assign(c, { list, error: null }))
+      .catch((e) => (c.error = e.message)) // keep the last good list
+      .finally(() => Object.assign(c, { at: Date.now(), pending: null }));
+  }
+  return c;
+}
+
+/** Attach the GitHub link, the open PRs, and each worktree's PR (by branch) to a project. */
+function withGithub(ws) {
+  const github = getGithub(ws.path);
+  if (!github || ws.closed) return { ...ws, github };
+  const c = pullsFor(github.repo);
+  const pulls = c.list && { list: c.list, at: c.at, error: c.error };
+  const worktrees = ws.worktrees.map((wt) => ({ ...wt, pr: (wt.branch && c.list?.find((p) => p.branch === wt.branch)) || null }));
+  return { ...ws, github, pulls, worktrees };
+}
+
+/** The linked GitHub Project's board, cached briefly (big boards take seconds). */
+async function boardFor(github, force = false) {
+  const { owner, number } = github.project;
+  const key = `${owner}/${number}`.toLowerCase();
+  const c = boardCache.get(key);
+  if (c?.pending) return c.pending;
+  if (c?.board && !force && Date.now() - c.at < BOARD_TTL) return c.board;
+  const pending = projectBoard({ owner, number });
+  boardCache.set(key, { ...c, pending });
+  try {
+    const board = await pending;
+    boardCache.set(key, { at: Date.now(), board, pending: null });
+    return board;
+  } catch (e) {
+    boardCache.set(key, { ...c, pending: null });
+    throw e;
+  }
+}
+
+/**
+ * Close (or reopen) a project. Closing kills its dock terminals: worktrees and loose-session folders.
+ * Sessions open elsewhere (Claude Desktop, another terminal) aren't ours to kill; they're counted.
+ */
+async function closeProject(path, closed) {
+  const ws = await knownProject(path);
+  setClosed(ws.path, closed);
+  if (!closed) return { closed: false };
+  const folders = new Set([...ws.worktrees.map((wt) => norm(wt.path)), ...ws.loose.filter((s) => s.cwd).map((s) => norm(s.cwd))]);
+  const mine = listTerms().filter((t) => folders.has(norm(t.path)));
+  for (const t of mine) closeTerm(t.path);
+  const docked = new Set(mine.map((t) => t.sessionId));
+  const liveElsewhere = [...ws.worktrees.flatMap((wt) => wt.sessions), ...ws.loose].filter((s) => s.live && !docked.has(s.id)).length;
+  return { closed: true, closedTerms: mine.length, liveElsewhere, terms: listTerms() };
+}
+
+/** A project (repo) from the latest snapshot, or a 400. */
+async function knownProject(path) {
+  const snap = await snapshot();
+  const ws = snap.workspaces.find((w) => norm(w.path) === norm(path ?? ''));
+  if (!ws) throw httpError(400, 'unknown project');
+  return ws;
+}
+
 /** Folders of loose sessions that still exist, keyed like worktreeIndex. */
 let looseIndex = new Map();
 /** Every session shown outside a worktree (loose or "other"), by id: what the session archive accepts. */
@@ -159,6 +247,7 @@ async function archiveWorktree(path, ack) {
     } catch (e) {
       throw httpError(500, `Couldn't remove the worktree: ${e.message.split('\n').slice(-2).join(' ').trim()}`);
     } finally {
+      if (teardown) releasePorts(plan.path); // its port block goes back to the pool
       // Wait for the rescan so the reply (and the next snapshot) no longer lists the worktree.
       await scan('invalidateRepo', plan.repo).catch(() => {});
     }
@@ -189,6 +278,114 @@ async function openAction({ action, path, sessionId }) {
     throw Object.assign(new Error('unknown action'), { status: 400 });
   }
   spawn(cmd, args, { detached: true, stdio: 'ignore', shell: cmd === 'code', windowsHide: false }).unref();
+}
+
+// ---------- Gyro conversion ----------
+
+/** Repos whose worktree-ports scripts the conversion session can learn from. */
+const GYRO_EXAMPLES = ['task-management/tools/worktree-ports/worktree-ports.mjs', 'watson-hollow/scripts/worktree-ports.js', 'forgerite/scripts/worktree-ports.mjs'];
+
+/**
+ * Start converting a project: ccdb checks git and archives orphaned sessions, makes a worktree for
+ * the work, and starts claude there on the brief. Pressing it again while a run's session is still
+ * open just returns that worktree.
+ */
+async function convertToGyro(path) {
+  const ws = await knownProject(path);
+  if (ws.closed) throw httpError(400, 'Reopen the project first');
+  const current = gyroOf(ws.path);
+  const open = current?.status === 'running' && current.worktree && findTerm(current.worktree);
+  if (open && !open.exited) return { worktree: current.worktree, terms: listTerms(), gyro: current };
+
+  // Projects are git repos by construction (the scanner only lists folders with .git); a repo
+  // without commits can't have worktrees yet, so its conversion runs in the main checkout.
+  const bases = await detail('worktreeBases', { repo: ws.path, trunk: ws.trunk ?? null });
+  const base = bases.trunk;
+  const done = [];
+  done.push({ step: 'git', detail: base ? `Git repository already (trunk ${base})` : 'Git repository already, with no commits yet' });
+
+  const orphans = await scan('orphans', ws.path);
+  const pruned = orphans.length ? await scan('archiveByIds', orphans) : { archived: [], skipped: [] };
+  for (const id of pruned.archived) looseIds.delete(id);
+  done.push({
+    step: 'prune',
+    detail: pruned.archived.length
+      ? `Archived ${pruned.archived.length} orphaned session${pruned.archived.length === 1 ? '' : 's'} (their worktrees are gone) to ~/.claude/ccdb-archive`
+      : 'No orphaned sessions',
+  });
+
+  let worktree = ws.path;
+  let branch = null;
+  if (base) {
+    const taken = new Set(bases.branches.map((b) => b.name));
+    const name = ['gyro', ...Array.from({ length: 8 }, (_, i) => `gyro-${i + 2}`)]
+      .find((n) => !taken.has(n) && !existsSync(join(worktreeHome(ws.path), n)));
+    if (!name) throw httpError(409, 'Branches gyro … gyro-9 all exist; remove some first');
+    worktree = (await detail('createWorktree', { repo: ws.path, name, base }).catch((e) => { throw httpError(400, e.message); })).path;
+    branch = name;
+    await scan('invalidateRepo', ws.path).catch(() => {});
+  }
+
+  const examples = GYRO_EXAMPLES.map((p) => join(CODE_ROOT, p))
+    .filter((p) => existsSync(p) && !norm(p).startsWith(norm(ws.path) + '/'))
+    .map((p) => p.replace(/\\/g, '/'));
+  const prompt = gyroBrief({
+    project: ws, worktree, branch, ccdbUrl: `http://127.0.0.1:${PORT}`,
+    done: done.map((d) => d.detail), examples, dev: ws.dev,
+  });
+  // No dev server yet: working out the right one is the session's first step.
+  const term = startTerm(worktree, undefined, null, prompt);
+  startGyro(ws.path, { worktree, sessionId: term.sessionId });
+  for (const d of done) reportStep(ws.path, d.step, 'done', d.detail);
+  return { worktree, terms: listTerms(), gyro: gyroOf(ws.path) };
+}
+
+/** A step report from the conversion session (any folder inside its worktree identifies the project). */
+async function gyroReport({ path, step, status, detail: note, devCommand, done, summary, changed }) {
+  let p = typeof path === 'string' ? path : '';
+  let target = null;
+  for (let i = 0; i < 12 && p && !target; i++, p = p.replace(/[\\/][^\\/]*$/, '')) target = await knownTarget(p);
+  if (!target) throw httpError(404, 'Not inside a project ccdb knows');
+  const repo = target.repo ?? target.path;
+  if (step !== undefined) {
+    if (devCommand !== undefined) {
+      if (typeof devCommand !== 'string' || devCommand.length > 500 || /[\r\n]/.test(devCommand)) throw httpError(400, 'bad devCommand');
+      // Only a real change: the command that already runs (set here, or detected) stays as it is.
+      const current = getDev(repo);
+      const cmd = devCommand.trim();
+      if (cmd !== (current !== undefined ? current : detectDev(repo) ?? '')) setDev(repo, cmd);
+    }
+    reportStep(repo, step, status, note);
+  }
+  if (done !== undefined) {
+    const g = finishGyro(repo, done === true, summary, changed);
+    // Nothing needed changing: the worktree made for the run has nothing to keep.
+    if (g.changed === false && g.worktree && norm(g.worktree) !== norm(repo)) retireWhenIdle(repo, g.worktree, g.sessionId);
+  }
+  return { gyro: gyroOf(repo) };
+}
+
+/**
+ * Remove a run's worktree once its session has finished its turn (it reports from inside that turn,
+ * so closing at once would cut it off). archiveWorktree refuses if anything was left uncommitted or
+ * committed, so a session that changed things after all keeps its worktree.
+ */
+function retireWhenIdle(repo, worktree, sessionId) {
+  const until = Date.now() + 10 * 60_000;
+  const tick = async () => {
+    try {
+      const snap = await snapshot();
+      const wt = snap.workspaces.flatMap((w) => w.worktrees).find((w) => norm(w.path) === norm(worktree));
+      if (!wt) return;
+      const s = wt.sessions.find((x) => x.id === sessionId);
+      if (s?.live && (s.live.status === 'busy' || s.live.background) && Date.now() < until) return void setTimeout(tick, 5000);
+      await archiveWorktree(worktree, false);
+      noteGyro(repo, 'Nothing needed changing, so Gyro removed the gyro worktree and branch.');
+    } catch (e) {
+      noteGyro(repo, `The gyro worktree was kept: ${e.message}`);
+    }
+  };
+  setTimeout(tick, 5000);
 }
 
 // ---------- http ----------
@@ -223,15 +420,33 @@ async function readJson(req) {
   return JSON.parse(body || '{}');
 }
 
-async function termAction({ action, path, sessionId }) {
+/** The dev server to run beside a dock session: the project's own setting, else its package.json script. */
+function devFor(target) {
+  const set = target.repo ? getDev(target.repo) : undefined;
+  return set !== undefined ? set || null : detectDev(target.path);
+}
+
+async function termAction({ action, path, sessionId, prompt, entry }) {
   // Closing only needs a running terminal; its worktree may have been removed out from under it.
   if (action === 'close' && path && findTerm(path)) return closeTerm(findTerm(path).path), { terms: listTerms() };
   const wt = await knownTarget(path);
   if (!wt) throw Object.assign(new Error('unknown worktree'), { status: 400 });
   if (sessionId && !UUID.test(sessionId)) throw Object.assign(new Error('bad session id'), { status: 400 });
   // Both return the full terminal list so the UI can update without waiting for a snapshot.
-  if (action === 'start') return startTerm(wt.path, sessionId), { terms: listTerms() };
+  if (prompt !== undefined && (sessionId || typeof prompt !== 'string' || prompt.length > 2000)) throw httpError(400, 'bad prompt');
+  if (entry !== undefined && (sessionId || prompt !== undefined || typeof entry !== 'string')) throw httpError(400, 'bad entry');
+  if (action === 'start' && entry) {
+    // A session for a board entry opens on the entry itself: description and comments, fetched now.
+    const project = getGithub(wt.repo ?? wt.path)?.project;
+    if (!project) throw httpError(400, 'No GitHub Project is linked to this project');
+    const e = await projectEntry(project, entry).catch((err) => { throw httpError(502, err.message); });
+    prompt = entryBrief(e);
+  }
+  if (action === 'start') return startTerm(wt.path, sessionId, devFor(wt), prompt), { terms: listTerms() };
   if (action === 'close') return closeTerm(wt.path), { terms: listTerms() };
+  // The dev server beside a dock session: restart it after it stops, or stop it.
+  if (action === 'dev-start' && findTerm(wt.path)) return startDev(wt.path, devFor(wt)), { terms: listTerms() };
+  if (action === 'dev-stop') return stopDev(wt.path), { terms: listTerms() };
   throw Object.assign(new Error('unknown action'), { status: 400 });
 }
 
@@ -243,8 +458,48 @@ const server = createServer(async (req, res) => {
       const path = new URL(req.url, 'http://localhost').searchParams.get('path');
       return send(res, 200, await teardownPlan(path));
     }
+    // Playwright reports are served on their own origin (127.0.0.1, not the dashboard's), so their scripts can't reach ccdb's page.
+    if ((req.method === 'GET' || req.method === 'HEAD') && req.url.startsWith('/report/') && (await serveReport(req, res))) return;
+    if (req.method === 'GET' && req.url.startsWith('/api/ports?')) {
+      // For a repo's own scripts started outside ccdb: the port block of the worktree holding `path`
+      // (any folder inside it), leased now if it has none. 404 for folders that aren't in a worktree.
+      let p = new URL(req.url, 'http://localhost').searchParams.get('path') ?? '';
+      let wt = null;
+      for (let i = 0; i < 12 && p && !wt; i++, p = p.replace(/[\\/][^\\/]*$/, '')) wt = await knownTarget(p);
+      if (!wt) return send(res, 404, { error: 'Not inside a worktree ccdb knows' });
+      return send(res, 200, { path: wt.path, ...leasePorts(wt.path) });
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/reports?')) {
+      const wt = await knownTarget(new URL(req.url, 'http://localhost').searchParams.get('path'));
+      if (!wt) throw httpError(400, 'unknown worktree');
+      const base = `http://127.0.0.1:${PORT}/report`;
+      return send(res, 200, { reports: (await findReports(wt.path)).map((r) => ({ ...r, url: `${base}/${r.id}/` })) });
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/worktrees/bases?')) {
+      const ws = await knownProject(new URL(req.url, 'http://localhost').searchParams.get('path'));
+      return send(res, 200, await detail('worktreeBases', { repo: ws.path, trunk: ws.trunk ?? null }).catch((e) => { throw httpError(400, e.message); }));
+    }
     if (req.method === 'GET' && req.url === '/api/projects/candidates') {
       return send(res, 200, { root: CODE_ROOT, candidates: await detail('projectCandidates', CODE_ROOT) });
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/github/options?')) {
+      const url = new URL(req.url, 'http://localhost');
+      const ws = await knownProject(url.searchParams.get('path'));
+      return send(res, 200, await githubOptions(ws.path, { repo: url.searchParams.get('repo')?.trim() || null, current: getGithub(ws.path) })
+        .catch((e) => { throw httpError(400, e.message); }));
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/github/board?')) {
+      const url = new URL(req.url, 'http://localhost');
+      const ws = await knownProject(url.searchParams.get('path'));
+      const github = getGithub(ws.path);
+      if (!github?.project) return send(res, 400, { error: 'No GitHub Project is linked to this project' });
+      return send(res, 200, await boardFor(github, url.searchParams.get('fresh') === '1').catch((e) => { throw httpError(502, e.message); }));
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/github/entry?')) {
+      const url = new URL(req.url, 'http://localhost');
+      const github = getGithub((await knownProject(url.searchParams.get('path'))).path);
+      if (!github?.project) return send(res, 400, { error: 'No GitHub Project is linked to this project' });
+      return send(res, 200, await projectEntry(github.project, url.searchParams.get('id')).catch((e) => { throw httpError(502, e.message); }));
     }
     if (req.method === 'GET' && req.url.startsWith('/api/git/')) {
       const url = new URL(req.url, 'http://localhost');
@@ -273,6 +528,9 @@ const server = createServer(async (req, res) => {
       if (!originOk(req)) return send(res, 403, { error: 'origin not allowed' });
       if (req.url === '/api/open') return send(res, 200, (await openAction(await readJson(req)), { ok: true }));
       if (req.url === '/api/terms') return send(res, 200, await termAction(await readJson(req)));
+      if (req.url === '/api/gyro/convert') return send(res, 200, await convertToGyro((await readJson(req)).path));
+      // From the conversion session's shell (curl sends no Origin, which originOk allows).
+      if (req.url === '/api/gyro/report') return send(res, 200, await gyroReport(await readJson(req)));
       if (req.url === '/api/git/action') {
         const { path, action, files, all, message, file, view, hunk } = await readJson(req);
         const found = await knownWorktree(path);
@@ -283,6 +541,17 @@ const server = createServer(async (req, res) => {
           return send(res, 200, result);
         } finally {
           scan('touch', wt.path).catch(() => {}); // tiles' ●/◆ flags catch up on the next scan
+        }
+      }
+      if (req.url === '/api/git/rebase') {
+        const { path } = await readJson(req);
+        const found = await knownWorktree(path);
+        if (!found) return send(res, 400, { error: 'unknown worktree' });
+        try {
+          return send(res, 200, await detail('autoRebase', { path: found.path, trunk: found.git?.trunk ?? null })
+            .catch((e) => { throw httpError(409, e.message); }));
+        } finally {
+          scan('touch', found.path).catch(() => {});
         }
       }
       if (req.url === '/api/git/compose') {
@@ -296,13 +565,68 @@ const server = createServer(async (req, res) => {
           scan('touch', found.path).catch(() => {});
         }
       }
+      if (req.url === '/api/projects/close') {
+        const { path, closed } = await readJson(req);
+        return send(res, 200, await closeProject(path, closed !== false));
+      }
+      if (req.url === '/api/github/entry/move') {
+        const { path, id, status } = await readJson(req);
+        const github = getGithub((await knownProject(path)).path);
+        if (!github?.project) return send(res, 400, { error: 'No GitHub Project is linked to this project' });
+        const entry = await moveEntry(github.project, id, status).catch((e) => { throw httpError(502, e.message); });
+        boardCache.delete(`${github.project.owner}/${github.project.number}`.toLowerCase());
+        return send(res, 200, entry);
+      }
+      if (req.url === '/api/github/refresh') {
+        const ws = await knownProject((await readJson(req)).path);
+        const github = getGithub(ws.path);
+        if (!github) return send(res, 400, { error: 'Not linked to GitHub' });
+        await pullsFor(github.repo, true).pending;
+        return send(res, 200, (await knownProject(ws.path)).pulls ?? null);
+      }
+      if (req.url === '/api/worktrees/create') {
+        const { path, name, base } = await readJson(req);
+        const ws = await knownProject(path);
+        const created = await detail('createWorktree', { repo: ws.path, name, base }).catch((e) => { throw httpError(400, e.message); });
+        await scan('invalidateRepo', ws.path).catch(() => {}); // so the next snapshot has it
+        return send(res, 200, created);
+      }
+      if (req.url === '/api/projects/dev') {
+        const { path, command } = await readJson(req);
+        const ws = await knownProject(path);
+        if (command !== null && (typeof command !== 'string' || command.length > 500 || /[\r\n]/.test(command))) throw httpError(400, 'bad dev command');
+        setDev(ws.path, command === null ? null : command.trim());
+        return send(res, 200, { dev: { command: getDev(ws.path) ?? null, detected: detectDev(ws.path) } });
+      }
+      if (req.url === '/api/github/link') {
+        const { path, repo, project } = await readJson(req);
+        const ws = await knownProject(path);
+        if (!repo) return (setGithub(ws.path, null), send(res, 200, { github: null }));
+        const link = await resolveLink({ repo, project }).catch((e) => { throw httpError(400, e.message); });
+        setGithub(ws.path, link);
+        return send(res, 200, { github: link });
+      }
       if (req.url === '/api/projects/create') {
-        const { mode, name, gitignore } = await readJson(req);
-        const result = await detail('createProject', { codeRoot: CODE_ROOT, mode, name, gitignore: gitignore === true })
+        const { mode, name, gitignore, gyro } = await readJson(req);
+        const result = await detail('createProject', { codeRoot: CODE_ROOT, mode, name, gitignore: gitignore === true, gyro: gyro === true })
           .catch((e) => { throw httpError(400, e.message); }); // bad name, already exists, ...
         await scan('invalidateRepo', result.path).catch(() => {}); // so the next snapshot has its tile
         await snapshot();
-        return send(res, 200, result);
+        if (gyro !== true) return send(res, 200, result);
+        // From scratch there's nothing to audit: the template files are the conversion.
+        if (mode === 'scratch') {
+          recordGyro(result.path, [
+            ['dev', 'skipped', 'Nothing to run yet; a dev or start script is picked up once there is one'],
+            ['git', 'done', 'Created with the project'],
+            ['prune', 'done', 'New project: no sessions'],
+            ['lease', 'done', 'ports.mjs from the Gyro template'],
+            ['ccdb', 'done', 'ports.mjs reads CCDB_PORT_BASE, then a running Gyro; CLAUDE.md has the Ports section'],
+          ], 'Created as a Gyro project.');
+          return send(res, 200, result);
+        }
+        // An existing folder has code to bring into shape: the usual conversion, in the main checkout (no commits yet).
+        const conversion = await convertToGyro(result.path).catch((e) => ({ error: e.message }));
+        return send(res, 200, { ...result, ...(conversion.error ? { notes: [...result.notes, `Gyro conversion didn't start: ${conversion.error}`] } : { worktree: conversion.worktree, terms: conversion.terms }) });
       }
       if (req.url === '/api/session/archive') {
         const { id, ids } = await readJson(req);
@@ -322,6 +646,7 @@ const server = createServer(async (req, res) => {
   }
 });
 attachPtySocket(server, originOk);
+loadExcludedPorts();
 server.listen(PORT, '127.0.0.1', () => console.log(`ccdb api on http://127.0.0.1:${PORT} (root ${CODE_ROOT})`));
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => (killAllTerms(), process.exit(0)));
 // node-pty's Windows agent throws from async callbacks; one bad terminal shouldn't take the dashboard down.

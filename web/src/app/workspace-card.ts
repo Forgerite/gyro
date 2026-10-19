@@ -19,8 +19,19 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, looseS
       >
         <h2>{{ ws().name }}</h2>
       </button>
+      @if (ws().closed) {
+        <span class="closed-tag">closed</span>
+        <button type="button" class="hdr-act" (click)="closeProject.emit(false)" [attr.aria-label]="'Reopen ' + ws().name"
+                title="Reopen: show its worktrees and sessions again">reopen</button>
+      } @else {
+        <button type="button" class="hdr-act close" (click)="closeProject.emit(true)" [attr.aria-label]="'Close ' + ws().name"
+                title="Close project: collapse it, stop its dock terminals, move it to the end">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      }
       <span class="age">{{ ws().lastActivity | ago: now() }}</span>
     </header>
+    @if (!ws().closed) {
     <ul>
       @for (wt of ws().worktrees; track wt.path) {
         @let s = wt.sessions[0];
@@ -42,7 +53,7 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, looseS
               @if (wt.branch && wt.branch !== wt.name) { <span class="branch">{{ wt.branch }}</span> }
               @if (wt.detached) { <span class="branch">&#64;{{ wt.head }}</span> }
             </span>
-            <app-wt-flags [git]="wt.git" />
+            <app-wt-flags [git]="wt.git" [pr]="wt.pr" compact />
             <span class="title">{{ s?.title ?? wt.git.lastCommitSubject ?? '' }}</span>
             <span class="multi">@if (liveIn(wt) > 1) { <span title="More than one live session in this worktree">×{{ liveIn(wt) }}</span> }</span>
             <span class="age">{{ wt.lastActivity | ago: now() }}</span>
@@ -91,6 +102,7 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, looseS
         }
       </div>
     }
+    }
   `,
   styleUrl: './workspace-card.css',
   host: { '[class]': 'cardState()' },
@@ -109,6 +121,8 @@ export class WorkspaceCard {
   /** Loose sessions in the multi-selection (any project). */
   readonly multi = input<string[]>([]);
   readonly activateSession = output<string>();
+  /** true = close the project, false = reopen it. */
+  readonly closeProject = output<boolean>();
 
   /** Older loose sessions are tucked away unless asked for (or one of them is selected). */
   protected readonly showOlder = signal(false);
@@ -144,8 +158,8 @@ export class WorkspaceCard {
     }
     return c;
   });
-  protected readonly cardState = computed<State>(() =>
-    this.counts().waiting ? 'waiting' : this.counts().busy ? 'busy' : 'none',
+  protected readonly cardState = computed<State | 'closed'>(() =>
+    this.ws().closed ? 'closed' : this.counts().waiting ? 'waiting' : this.counts().busy ? 'busy' : 'none',
   );
 
   protected isSel(kind: Selection['kind'], path: string) {
@@ -159,6 +173,7 @@ export class WorkspaceCard {
 
   /** A session still booting in the dock counts as working. */
   protected stateOf(wt: Worktree): State {
+    if (this.api.smartBusy(wt.path)) return 'busy'; // Claude is composing or rebasing here
     const st = this.api.starting()[wt.path];
     if (st && !st.failed) return 'busy';
     return sessionState(wt.sessions[0]);

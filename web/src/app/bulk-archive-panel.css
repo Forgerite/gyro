@@ -15,7 +15,7 @@ h2 { margin: 0; font-size: 14px; }
 .where { color: var(--text-2); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .age { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.running .age { color: var(--busy); font-weight: 600; }
+.running .age { color: var(--text-2); font-weight: 600; }
 .running .t, .running .where { opacity: 0.6; }
 .x { all: unset; cursor: pointer; color: var(--muted); text-align: center; border-radius: 3px; }
 .x:hover { color: var(--danger); background: var(--hover); }

@@ -46,7 +46,7 @@ ul { list-style: none; margin: 0; padding: 0; }
   box-sizing: border-box;
   width: 100%;
   display: grid;
-  grid-template-columns: 10px minmax(0, 0.9fr) 18px minmax(0, 1.4fr) auto 26px;
+  grid-template-columns: 10px minmax(0, 0.9fr) 30px minmax(0, 1.4fr) auto 26px;
   align-items: center;
   gap: 6px;
   padding: 3px 8px;
@@ -128,3 +128,26 @@ app-wt-flags { justify-content: flex-end; }
   border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg);
 }
+
+/* Close / reopen in the tile header */
+.hdr-act {
+  all: unset;
+  cursor: pointer;
+  font-size: 10.5px;
+  color: var(--muted);
+  padding: 0 4px;
+  border-radius: 3px;
+  line-height: 16px;
+}
+.hdr-act:hover { color: var(--accent); background: var(--hover); }
+.hdr-act:focus-visible { outline: 2px solid var(--accent); }
+.hdr-act.close { opacity: 0; display: inline-flex; align-items: center; }
+.hdr-act.close svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+:host(:hover) .hdr-act.close, .hdr-act.close:focus-visible { opacity: 1; }
+@media (hover: none) { .hdr-act.close { opacity: 1; } }
+
+/* Closed: just the header, neutral, at the end of the list */
+:host(.closed) { opacity: 0.75; border-style: dashed; }
+:host(.closed) header { border-bottom: none; background: var(--panel); }
+:host(.closed) h2 { font-weight: 500; color: var(--text-2); }
+.closed-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }

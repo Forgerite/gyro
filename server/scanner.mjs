@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readdir, readFile, stat, open, rename, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, basename } from 'node:path';
 import { parentPort, workerData } from 'node:worker_threads';
@@ -130,8 +130,35 @@ function textOf(content) {
   return content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
 }
 
+/** "<task-notification> … <tool-use-id>toolu_…</tool-use-id>": a background task finished (or was stopped). */
+const NOTIFIED = /<tool-use-id>(toolu_[A-Za-z0-9_-]+)<\/tool-use-id>/g;
+const OUTPUT_FILE = /written to: (.+?\.output)\b/;
+
+/**
+ * Background work a session started and hasn't heard back from: shells run in the background,
+ * async subagents and workflows. Claude marks a session idle when its turn ends, even while these run.
+ */
+function trackBackground(r, s) {
+  // Finished: the notification is queued (and later delivered as a user message) with the launch's tool-use id.
+  const note = r.type === 'queue-operation' ? r.content
+    : r.type === 'user' && typeof r.message?.content === 'string' ? r.message.content : null;
+  if (typeof note === 'string' && note.includes('<task-notification>')) {
+    for (const [, id] of note.matchAll(NOTIFIED)) s.background?.delete(id);
+    return;
+  }
+  const res = r.toolUseResult;
+  if (r.type !== 'user' || !res || typeof res !== 'object' || !Array.isArray(r.message?.content)) return;
+  const kind = res.backgroundTaskId ? 'shell' : res.isAsync ? 'agent' : res.taskId && res.status ? 'workflow' : null;
+  const id = kind && r.message.content.find((c) => c.type === 'tool_result')?.tool_use_id;
+  if (!id) return;
+  const text = textOf(r.message.content.find((c) => c.type === 'tool_result').content);
+  s.background ??= new Map();
+  s.background.set(id, { kind, at: Date.parse(r.timestamp) || 0, output: res.outputFile ?? text.match(OUTPUT_FILE)?.[1] ?? null });
+}
+
 function summarize(records, s) {
   for (const r of records) {
+    if (!r.isSidechain) trackBackground(r, s);
     if (r.cwd) s.cwd = r.cwd;
     if (r.type === 'relocated' && r.relocatedCwd) s.cwd = r.relocatedCwd;
     if (r.gitBranch) s.branch = r.gitBranch;
@@ -176,6 +203,7 @@ async function readSession(file) {
   summarize(parseLines(await readSlice(file, start, st.size - start), big), s);
   s.lastActivity ??= st.mtimeMs;
   s.title = s.customTitle ?? s.aiTitle ?? s.lastPrompt?.slice(0, 80) ?? null;
+  s.background = s.background?.size ? [...s.background.values()] : null;
   for (const [k, max] of [['lastAssistant', 4000], ['lastUser', 1200], ['lastPrompt', 300]]) {
     if (s[k]?.length > max) s[k] = s[k].slice(0, max) + '…';
   }
@@ -213,7 +241,7 @@ async function readLiveSessions() {
       if (!isAlive(j.pid)) return;
       live.set(j.sessionId, {
         pid: j.pid, status: j.status, name: j.name, entrypoint: j.entrypoint,
-        cwd: j.cwd, statusUpdatedAt: j.statusUpdatedAt, kind: j.kind,
+        cwd: j.cwd, statusUpdatedAt: j.statusUpdatedAt, kind: j.kind, startedAt: j.startedAt,
       });
     } catch { /* torn write */ }
   }));
@@ -310,6 +338,28 @@ function worktreeHome(workspaces, cwd) {
   return null;
 }
 
+/** A background shell that's gone quiet this long counts as left running (a dev server), not as work. */
+const QUIET_SHELL_MS = 10 * 60_000;
+/** Subagents and workflows always report back; past this, assume the notification was lost. */
+const STALE_TASK_MS = 12 * 3600_000;
+
+/** Background tasks of this live session still running: launched by this process, not yet reported back. */
+function runningBackground(s, live) {
+  const now = Date.now();
+  let n = 0;
+  for (const t of s.background ?? []) {
+    if (live.startedAt && t.at < live.startedAt) continue;
+    if (now - t.at > STALE_TASK_MS) continue;
+    if (t.kind === 'shell' && now - t.at > QUIET_SHELL_MS) {
+      let written = 0;
+      try { written = statSync(t.output).mtimeMs; } catch { /* no output file: gone */ }
+      if (now - written > QUIET_SHELL_MS) continue;
+    }
+    n++;
+  }
+  return n;
+}
+
 async function snapshot() {
   const [workspaces, sessions, live] = await Promise.all([loadWorkspaces(), readAllSessions(), readLiveSessions()]);
 
@@ -326,7 +376,7 @@ async function snapshot() {
 
   for (const s of sessions) {
     const l = live.get(s.id);
-    const session = { ...s, file: undefined, live: l ?? null };
+    const session = { ...s, file: undefined, background: undefined, live: l ? { ...l, background: runningBackground(s, l) } : null };
     if (l?.name && !s.customTitle) session.title = l.name;
     const cwd = norm(l?.cwd ?? s.cwd ?? '');
     const owner = worktreeHome(out, cwd);
@@ -341,11 +391,13 @@ async function snapshot() {
     if (hit) byPath.get(hit.key).sessions.push(session);
     else unmatched.push(session);
   }
+  orphaned = new Map();
   for (const [ws, list] of looseBy) {
     list.sort((a, b) => b.lastActivity - a.lastActivity);
     ws.loose = list.slice(0, LOOSE_LIMIT);
+    orphaned.set(norm(ws.path), list.filter((x) => !x.folderExists && !x.live).map((x) => x.id));
   }
-  const rank = (s) => (s.live?.status === 'busy' ? 2 : s.live ? 1 : 0);
+  const rank = (s) => (s.live?.status === 'busy' || s.live?.background ? 2 : s.live ? 1 : 0);
   const hot = new Set();
   for (const [key, wt] of byPath) {
     wt.sessions.sort((a, b) => rank(b) - rank(a) || b.lastActivity - a.lastActivity);
@@ -363,9 +415,19 @@ async function snapshot() {
 }
 
 
+/** Per project (norm path): ids of sessions whose worktree folder is gone and that aren't running, from the last snapshot. */
+let orphaned = new Map();
+
+/** Every orphaned session of a project, not just the newest LOOSE_LIMIT the snapshot shows. */
+async function orphans(repo) {
+  await snapshot();
+  return orphaned.get(norm(repo ?? '')) ?? [];
+}
+
 /** The worktree at `path`, from the cached scan; waits for a fresh scan only if it isn't there. */
 async function findWorktree(path) {
-  const find = (ws) => ws.flatMap((w) => w.worktrees).find((wt) => norm(wt.path) === norm(path ?? ''));
+  // With its project (`repo`), like the main thread's index: per-project settings such as the dev command key on it.
+  const find = (ws) => ws.flatMap((w) => w.worktrees.map((wt) => ({ ...wt, repo: w.path }))).find((wt) => norm(wt.path) === norm(path ?? ''));
   return find(await loadWorkspaces()) ?? find(await loadWorkspaces({ fresh: true })) ?? null;
 }
 
@@ -414,7 +476,7 @@ async function invalidateRepo(repo) {
   await loadWorkspaces({ fresh: true }); // other repos stay cached, so this is quick
 }
 
-const ops = { snapshot, findWorktree, touch, archiveByIds, invalidateRepo };
+const ops = { snapshot, findWorktree, touch, archiveByIds, invalidateRepo, orphans };
 
 parentPort.on('message', async ({ id, op, arg }) => {
   try {

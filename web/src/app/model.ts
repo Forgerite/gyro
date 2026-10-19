@@ -4,6 +4,8 @@ export interface LiveInfo {
   name?: string;
   entrypoint?: string;
   statusUpdatedAt?: number;
+  /** Background shells, subagents and workflows it started that are still running. */
+  background?: number;
 }
 
 export interface Session {
@@ -48,8 +50,19 @@ export interface Worktree {
   isMain: boolean;
   prunable: boolean;
   git: GitStatus;
+  /** The open GitHub PR from this branch (linked projects only). */
+  pr?: PullRequest | null;
+  /** Its port block, once ccdb has run something here (see server/ports.mjs). */
+  ports?: PortBlock | null;
   sessions: Session[];
   lastActivity: number;
+}
+
+/** Ports leased to one worktree: base … base + count − 1, unique on this machine. */
+export interface PortBlock {
+  slot: number;
+  base: number;
+  count: number;
 }
 
 export interface Workspace {
@@ -59,6 +72,112 @@ export interface Workspace {
   /** Sessions from this project's worktree folders that are no longer worktrees (newest first). */
   loose: Session[];
   lastActivity: number;
+  /** Closed: collapsed to its header at the end of the list, never coloured, its dock terminals killed. */
+  closed?: boolean;
+  /** The GitHub repo (and optionally GitHub Project) this project is linked to. */
+  github?: GithubLink | null;
+  /** Open PRs of the linked repo, as of `at`; absent until first fetched. */
+  pulls?: { list: PullRequest[]; at: number; error: string | null } | null;
+  /** The dev server dock sessions start beside. */
+  dev?: DevSetting;
+  /** Its Gyro conversion, if one was ever started. */
+  gyro?: GyroRun | null;
+}
+
+export type GyroStepStatus = 'pending' | 'done' | 'skipped' | 'failed';
+
+export interface GyroStep {
+  key: 'dev' | 'git' | 'prune' | 'lease' | 'ccdb';
+  label: string;
+  /** Who does it: ccdb itself before the session starts, or the Claude session. */
+  by: 'ccdb' | 'claude';
+  status: GyroStepStatus;
+  detail: string | null;
+  at: number | null;
+}
+
+/** A Gyro conversion: running until its session reports it finished; done only if every step was done or skipped. */
+export interface GyroRun {
+  status: 'running' | 'done' | 'failed';
+  startedAt: number;
+  finishedAt: number | null;
+  /** Where the session works: a worktree made for it (or the main checkout of a repo with no commits). */
+  worktree: string | null;
+  sessionId: string | null;
+  summary: string | null;
+  /** false: everything was already in shape, so nothing changed (and the run's worktree is removed). null while running. */
+  changed: boolean | null;
+  steps: GyroStep[];
+}
+
+/** A project's dev command: set in ccdb (`''` for none), else detected from package.json. */
+export interface DevSetting {
+  command: string | null;
+  detected: string | null;
+}
+
+export interface PullRequest {
+  number: number;
+  title: string;
+  url: string;
+  branch: string;
+  base: string;
+  draft: boolean;
+  /** APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, or null when no review is needed. */
+  review: string | null;
+  checks: 'pass' | 'fail' | 'pending' | null;
+  author: string | null;
+  updatedAt: number | null;
+  /** Issue numbers this PR closes. */
+  closes: number[];
+}
+
+/** An entry on a GitHub Project: its column, not the issue or PR behind it, says where it stands. */
+export interface BoardItem {
+  id: string;
+  /** The entry on the board. */
+  url: string;
+  /** Its Status column; null when it has none. */
+  status: string | null;
+  /** In a finished column (Done, Closed, ...). */
+  done: boolean;
+  kind: 'issue' | 'pr' | 'draft';
+  number: number | null;
+  title: string;
+  /** The issue or PR behind the entry; null for draft entries. */
+  contentUrl: string | null;
+  draft: boolean;
+  branch: string | null;
+  repo: string | null;
+  assignees: string[];
+  labels: string[];
+  updatedAt: number | null;
+}
+
+export interface Board {
+  title: string;
+  url: string;
+  total: number;
+  truncated: boolean;
+  columns: { id: string | null; name: string; color: string | null; done: boolean; items: BoardItem[] }[];
+  fetchedAt: number;
+}
+
+export interface GithubProject {
+  owner: string;
+  number: number;
+  title: string;
+  url: string;
+}
+
+export interface GithubLink {
+  /** owner/name */
+  repo: string;
+  url: string;
+  defaultBranch: string | null;
+  private: boolean;
+  project: GithubProject | null;
+  linkedAt: number;
 }
 
 export interface Snapshot {
@@ -74,7 +193,8 @@ export type State = 'busy' | 'waiting' | 'none';
 
 export function sessionState(s: Session | undefined): State {
   if (!s) return 'none';
-  return s.live?.status === 'busy' ? 'busy' : 'waiting';
+  // Claude goes idle when its turn ends, but a background shell or subagent it's waiting on is still work.
+  return s.live?.status === 'busy' || s.live?.background ? 'busy' : 'waiting';
 }
 
 /**
@@ -104,6 +224,17 @@ export interface Term {
   exited: boolean;
   exitCode: number | null;
   attached: number;
+  /** The project's dev script (`npm run dev`), run beside claude; null when it has none. */
+  devCommand: string | null;
+  dev: DevServer | null;
+}
+
+/** The dev server running beside a dock session, and the local URL it printed once it was up. */
+export interface DevServer {
+  startedAt: number;
+  exited: boolean;
+  exitCode: number | null;
+  url: string | null;
 }
 
 export interface GraphCommit {
@@ -163,4 +294,38 @@ export interface CommitInfo {
   subject: string;
   body: string;
   parents: string[];
+}
+
+/** A board entry opened in the detail panel: everything needed to read it and move it along. */
+export interface BoardEntry {
+  id: string;
+  url: string;
+  archived: boolean;
+  options: { id: string; name: string; color: string | null; done: boolean }[];
+  /** The Status column it's in; null when it has none. */
+  statusId: string | null;
+  kind: 'issue' | 'pr' | 'draft';
+  number: number | null;
+  title: string;
+  contentUrl: string | null;
+  /** The issue or PR's own state (OPEN, CLOSED, MERGED). */
+  state: string | null;
+  draft: boolean;
+  branch: string | null;
+  repo: string | null;
+  author: string | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+  assignees: string[];
+  labels: string[];
+  /** Rendered by GitHub. */
+  bodyHTML: string;
+  comments: { id: string; author: string; createdAt: number | null; bodyHTML: string; url: string }[];
+  commentCount: number;
+}
+
+/** Which board entry the detail panel is showing: the project it belongs to, and the entry's id. */
+export interface EntryTarget {
+  path: string;
+  id: string;
 }

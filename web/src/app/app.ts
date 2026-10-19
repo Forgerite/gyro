@@ -3,6 +3,8 @@ import { AgoPipe } from './ago.pipe';
 import { DashboardService } from './dashboard.service';
 import { LOOSE_RECENT_MS, Selection, Session, Workspace, Worktree } from './model';
 import { TerminalDock } from './terminal-dock';
+import { NewSession } from './new-session';
+import { EntryView } from './entry-view';
 import { DiffViewer } from './diff-viewer';
 import { LooseSessionPanel } from './loose-session-panel';
 import { Created, NewProjectPanel } from './new-project-panel';
@@ -13,11 +15,17 @@ import { BulkArchivePanel, PickedSession } from './bulk-archive-panel';
 
 const STALE_MS = 14 * 86_400_000;
 const DOCK_KEY = 'ccdb.dockHeight';
+const MAIN_KEY = 'ccdb.showMain';
 const DOCK_MIN = 120;
+const DETAIL_KEY = 'ccdb.detailWidth';
+const DETAIL_MIN = 320;
+const DETAIL_DEFAULT = 440;
+/** Expanded, the tiles keep this much room. */
+const TILES_MIN = 320;
 
 @Component({
   selector: 'app-root',
-  imports: [WorkspaceCard, ProjectPanel, WorktreePanel, LooseSessionPanel, BulkArchivePanel, NewProjectPanel, TerminalDock, DiffViewer, AgoPipe],
+  imports: [WorkspaceCard, ProjectPanel, WorktreePanel, LooseSessionPanel, BulkArchivePanel, NewProjectPanel, TerminalDock, DiffViewer, EntryView, AgoPipe],
   templateUrl: './app.html',
   styleUrl: './app.css',
   host: { '(document:keydown)': 'onKey($event)' },
@@ -28,6 +36,8 @@ export class App {
 
   protected readonly filter = signal('');
   protected readonly activeOnly = signal(false);
+  /** Show each project's main worktree. Off by default: work happens in worktrees, not on trunk. */
+  protected readonly showMain = signal(loadShowMain());
   protected readonly selected = signal<Selection | null>(null);
   /** Loose sessions multi-selected for a bulk archive (Ctrl/Shift+click); two or more take over the panel. */
   protected readonly multi = signal<string[]>([]);
@@ -37,6 +47,10 @@ export class App {
   private anchor: string | null = null;
   protected readonly now = this.api.now;
   protected readonly dockHeight = signal(loadDockHeight());
+  protected readonly DETAIL_MIN = DETAIL_MIN;
+  /** The detail panel's width as last dragged; expanded, it takes everything but a column of tiles. */
+  protected readonly detailWidth = signal(loadDetailWidth());
+  protected readonly detailWide = signal(false);
 
   /** Dock terminal for the selected worktree, if one exists. */
   protected readonly selectedTerm = computed(() => {
@@ -49,10 +63,19 @@ export class App {
     if (!snap) return [];
     const q = this.filter().trim().toLowerCase();
     const cutoff = this.now() - STALE_MS;
+    const sel = this.selected();
+    const termed = new Set(snap.terms.filter((t) => !t.exited).map((t) => t.path));
+    // A hidden main worktree still shows while something runs there or it's selected: never hide work in progress.
+    const hideMain = (wt: Worktree) =>
+      wt.isMain && !this.showMain() && !wt.sessions.some((s) => s.live) && !termed.has(wt.path) &&
+      !(sel?.kind === 'worktree' && sel.path === wt.path);
     return snap.workspaces
       .map((ws) => ({
         ...ws,
+        // Only the main worktree hidden: keep the project's tile (its header), not drop it.
+        hasWorktrees: ws.worktrees.length > 0,
         worktrees: ws.worktrees.filter((wt) => {
+          if (hideMain(wt)) return false;
           if (this.activeOnly() && wt.lastActivity < cutoff && !wt.sessions.some((s) => s.live)) return false;
           if (!q) return true;
           const hay = [ws.name, wt.name, wt.branch, ...wt.sessions.map((s) => s.title)].join(' ').toLowerCase();
@@ -60,12 +83,14 @@ export class App {
         }),
         loose: !q ? ws.loose : ws.loose.filter((s) => [ws.name, s.worktreeName, s.title].join(' ').toLowerCase().includes(q)),
       }))
-      .filter((ws) => ws.worktrees.length || ws.loose.length);
+      .filter((ws) => ws.worktrees.length || ws.loose.length || (ws.hasWorktrees && !q && !this.activeOnly()))
+      // Closed projects go to the end, keeping their relative order.
+      .sort((a, b) => Number(!!a.closed) - Number(!!b.closed));
   });
 
   /** Display order for keyboard navigation: each project header, then its worktrees. */
   private readonly flat = computed<Selection[]>(() =>
-    this.workspaces().flatMap((ws) => [
+    this.workspaces().flatMap((ws) => ws.closed ? [{ kind: 'project' as const, path: ws.path }] : [
       { kind: 'project' as const, path: ws.path },
       ...ws.worktrees.map((wt) => ({ kind: 'worktree' as const, path: wt.path })),
       ...ws.loose
@@ -125,6 +150,11 @@ export class App {
       const d = untracked(() => this.api.diffView());
       if (d && !(sel?.kind === 'worktree' && sel.path === d.path)) this.api.diffView.set(null);
     });
+    // An open board entry sits over the selection; selecting something else closes it.
+    effect(() => {
+      this.selected();
+      untracked(() => this.api.entry.set(null));
+    });
     // Selecting a worktree brings its terminal tab forward (without stealing focus).
     effect(() => {
       const t = this.selectedTerm();
@@ -138,12 +168,28 @@ export class App {
     this.selected.set({ kind: 'worktree', path });
   }
 
+  /** Close from a tile or the panel: anything selected inside the project steps up to the project. */
+  protected setClosed(path: string, closed: boolean) {
+    const sel = this.selection();
+    if (closed && sel && sel.kind !== 'project' && sel.ws.path === path) this.selectProject(path);
+    this.multi.update((m) => (closed ? m.filter((id) => !this.api.snapshot()?.workspaces.find((w) => w.path === path)?.loose.some((s) => s.id === id)) : m));
+    this.api.setProjectClosed(path, closed);
+  }
+
   protected startCreating() {
     this.multi.set([]);
     this.creating.set(true);
   }
 
   /** New repo: select its main worktree. A converted folder opens on the Git tab to review its files. */
+  /** A worktree made for a new session: select it, and start claude there (on the issue, if one was picked). */
+  protected sessionStarted({ path, entry }: NewSession) {
+    this.selectWorktree(path);
+    this.api.setPanelTab('session');
+    this.api.startTerm(path, undefined, entry ?? undefined);
+    this.api.refresh();
+  }
+
   protected projectCreated({ path, mode }: Created) {
     this.creating.set(false);
     this.selected.set({ kind: 'worktree', path });
@@ -251,6 +297,51 @@ export class App {
     handle.addEventListener('pointerup', up);
   }
 
+  protected toggleWide() {
+    this.detailWide.update((w) => !w);
+  }
+
+  protected toggleMain() {
+    this.showMain.update((v) => !v);
+    try { localStorage.setItem(MAIN_KEY, this.showMain() ? '1' : '0'); } catch { /* storage unavailable */ }
+  }
+
+  /** Dragging the detail panel's edge sets its width (and leaves expanded mode). */
+  protected startDetailResize(e: PointerEvent) {
+    if (e.button !== 0) return;
+    const handle = e.target as HTMLElement;
+    handle.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      this.detailWide.set(false);
+      this.detailWidth.set(clampDetail(window.innerWidth - ev.clientX));
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      saveDetailWidth(this.detailWidth());
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+  }
+
+  /** The edge from the keyboard: arrows resize, Enter expands or contracts. */
+  protected detailKey(e: KeyboardEvent) {
+    const step = e.shiftKey ? 120 : 40;
+    const by = e.key === 'ArrowLeft' ? step : e.key === 'ArrowRight' ? -step : 0;
+    if (by) {
+      const from = this.detailWide() ? window.innerWidth - TILES_MIN : this.detailWidth();
+      this.detailWide.set(false);
+      this.detailWidth.set(clampDetail(from + by));
+      saveDetailWidth(this.detailWidth());
+    } else if (e.key === 'Enter') {
+      this.toggleWide();
+    } else {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
   /** Project: drill into its first worktree. Worktree: resume its latest session, or start one. Live sessions are left alone. */
   protected activate(path?: string) {
     if (path) this.selectWorktree(path);
@@ -263,7 +354,8 @@ export class App {
       return this.api.startTerm(sel.s.cwd, sel.s.id);
     }
     if (sel.kind === 'project') {
-      const first = this.workspaces().find((w) => w.path === sel.ws.path)?.worktrees[0] ?? sel.ws.worktrees[0];
+      // Into its first listed worktree; not into a hidden main one (start a new session from the panel instead).
+      const first = this.workspaces().find((w) => w.path === sel.ws.path)?.worktrees[0];
       if (first) this.selectWorktree(first.path);
       return;
     }
@@ -293,6 +385,11 @@ export class App {
       return;
     }
     if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'Escape' && this.api.entry()) {
+      this.api.entry.set(null);
+      e.preventDefault();
+      return;
+    }
     // The New project form owns the keyboard while it's open (Esc closes it).
     if (this.creating()) {
       if (e.key === 'Escape') this.creating.set(false);
@@ -355,6 +452,12 @@ export class App {
       case 'a':
         this.activeOnly.update((v) => !v);
         break;
+      case 'm':
+        this.toggleMain();
+        break;
+      case 'e':
+        this.toggleWide();
+        break;
       case 'g':
         this.api.setPanelTab(this.api.panelTab() === 'git' ? 'session' : 'git');
         break;
@@ -370,6 +473,26 @@ export class App {
 
 function idFor(sel: Selection) {
   return ({ project: 'ws-', worktree: 'wt-', session: 'ls-' } as const)[sel.kind] + sel.path;
+}
+
+function clampDetail(w: number) {
+  return Math.round(Math.max(DETAIL_MIN, Math.min(window.innerWidth - TILES_MIN, w)));
+}
+
+function loadDetailWidth() {
+  try {
+    const v = Number(localStorage.getItem(DETAIL_KEY));
+    if (v >= DETAIL_MIN) return v;
+  } catch { /* storage unavailable */ }
+  return DETAIL_DEFAULT;
+}
+
+function saveDetailWidth(w: number) {
+  try { localStorage.setItem(DETAIL_KEY, String(w)); } catch { /* storage unavailable */ }
+}
+
+function loadShowMain() {
+  try { return localStorage.getItem(MAIN_KEY) === '1'; } catch { return false; }
 }
 
 function loadDockHeight() {

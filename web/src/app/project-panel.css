@@ -17,8 +17,6 @@ header {
 h2 { margin: 0; font-size: 15px; }
 .path { color: var(--muted); font-size: 11px; word-break: break-all; }
 .stats { display: flex; flex-wrap: wrap; gap: 10px; color: var(--text-2); }
-.busy-t { color: var(--busy); }
-.waiting-t { color: var(--waiting); }
 .dirty { color: var(--dirty); }
 .unmerged { color: var(--accent); }
 
@@ -81,14 +79,15 @@ ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .age { color: var(--muted); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--quiet); }
-.busy .dot { background: var(--busy); animation: pulse 1.2s ease-in-out infinite; }
-.waiting .dot { background: transparent; border: 2px solid var(--waiting); box-sizing: border-box; }
-.waiting.live .dot { background: var(--waiting); }
-
-/* Same state colors as the tiles. */
-.wt.waiting { background: var(--waiting-bg); border-color: color-mix(in srgb, var(--waiting) 50%, var(--border)); --muted: color-mix(in srgb, var(--text) 72%, transparent); }
-.wt.busy { background: var(--busy-bg); border-color: color-mix(in srgb, var(--busy) 50%, var(--border)); --muted: color-mix(in srgb, var(--text) 72%, transparent); }
-.wt.waiting .sub, .wt.busy .sub { color: var(--text); }
-.busy-t, .waiting-t { font-weight: 600; }
+/* Session state by shape only (colour is reserved for the tiles): pulsing = working, ring = not running. */
+.busy .dot { background: var(--text-2); animation: pulse 1.2s ease-in-out infinite; }
+.waiting .dot { background: transparent; border: 2px solid var(--text-2); box-sizing: border-box; }
+.waiting.live .dot { background: var(--text-2); }
+.busy-t, .waiting-t { font-weight: 600; color: var(--text-2); }
 
 @keyframes pulse { 50% { opacity: 0.35; } }
+.actions .spacer { flex: 1; }
+.actions .close-btn:hover { border-color: var(--danger); color: var(--danger); }
+.closed-note { margin: 6px 0 0; font-size: 11px; color: var(--muted); }
+.actions .primary { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.actions .primary:hover { filter: brightness(1.1); }

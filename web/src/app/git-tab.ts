@@ -38,13 +38,13 @@ type SyncAction = 'fetch' | 'pull' | 'push';
         }
         @if (s.branch && s.remote) {
           <span class="sync" role="group" aria-label="Sync with remote">
-            <button type="button" class="act" (click)="sync('fetch')" [disabled]="!!syncing()"
+            <button type="button" class="act" (click)="sync('fetch')" [disabled]="!!syncing() || smartBusy()"
                     [title]="'Fetch ' + s.remote + ' to update the counts'">{{ syncing() === 'fetch' ? 'Fetching…' : 'Fetch' }}</button>
-            <button type="button" class="act" [class.due]="s.behind > 0" (click)="sync('pull')" [disabled]="!!syncing() || !s.upstream"
+            <button type="button" class="act" [class.due]="s.behind > 0" (click)="sync('pull')" [disabled]="!!syncing() || smartBusy() || !s.upstream"
                     [title]="s.upstream ? 'Fetch, then fast-forward ' + s.branch + ' to ' + s.upstream : 'Nothing to pull: the branch is not published yet'">
               {{ syncing() === 'pull' ? 'Pulling…' : 'Pull' }}@if (s.behind) { <span class="cnt">↓{{ s.behind }}</span> }
             </button>
-            <button type="button" class="act" [class.due]="s.ahead > 0 || !s.upstream" (click)="sync('push')" [disabled]="!!syncing()"
+            <button type="button" class="act" [class.due]="s.ahead > 0 || !s.upstream" (click)="sync('push')" [disabled]="!!syncing() || smartBusy()"
                     [title]="s.upstream ? 'Push ' + s.branch + ' to ' + s.upstream : 'Publish ' + s.branch + ' to ' + s.remote + ' and track it'">
               {{ syncing() === 'push' ? 'Pushing…' : s.upstream ? 'Push' : 'Publish' }}@if (s.ahead) { <span class="cnt">↑{{ s.ahead }}</span> }
             </button>
@@ -136,6 +136,8 @@ export class GitTab {
   protected readonly note = signal<string | null>(null);
   /** Compose commit (smart feature) running or finished in this worktree. */
   protected readonly composingHere = computed(() => !!this.api.composing()[this.wt().path]);
+  /** Fetch/pull/push wait while a smart feature rewrites this worktree. */
+  protected readonly smartBusy = computed(() => this.api.smartBusy(this.wt().path));
   protected readonly composed = computed(() => this.api.composed()[this.wt().path] ?? null);
   /** Graph scope: this worktree's branch + trunk (default), or every ref in the repo. */
   protected readonly allBranches = signal(false);
