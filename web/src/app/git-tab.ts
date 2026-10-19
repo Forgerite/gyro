@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { Component, ElementRef, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { Component, ElementRef, computed, effect, inject, input, linkedSignal, signal, untracked } from '@angular/core';
 import { AgoPipe } from './ago.pipe';
 import { DashboardService, workingEntries } from './dashboard.service';
 import { Seg, layoutGraph } from './graph-layout';
@@ -17,7 +17,7 @@ const AUTO_FETCH_MS = 5 * 60_000;
 /** Worktree path → when we last fetched it (any GitTab instance). */
 const lastFetch = new Map<string, number>();
 
-type SyncAction = 'fetch' | 'pull' | 'push';
+type SyncAction = 'fetch' | 'pull' | 'push' | 'forcePush';
 
 /** Changes in this worktree, then the repository graph with this worktree's own commits highlighted. */
 @Component({
@@ -48,6 +48,16 @@ type SyncAction = 'fetch' | 'pull' | 'push';
                     [title]="s.upstream ? 'Push ' + s.branch + ' to ' + s.upstream : 'Publish ' + s.branch + ' to ' + s.remote + ' and track it'">
               {{ syncing() === 'push' ? 'Pushing…' : s.upstream ? 'Push' : 'Publish' }}@if (s.ahead) { <span class="cnt">↑{{ s.ahead }}</span> }
             </button>
+            @if (s.upstream && s.ahead && s.behind) {
+              <!-- Diverged (e.g. after a rebase): replace the remote branch, leased to the commit shown here. -->
+              <button type="button" class="act force" [class.confirm]="confirmForce()" (click)="forcePush()" [disabled]="!!syncing() || smartBusy()"
+                      [title]="'Overwrite ' + s.upstream + ' with ' + s.branch + ', dropping its ' + s.behind + ' commit' + (s.behind === 1 ? '' : 's') + ' not on this branch. Fails if anyone pushed since the last fetch.'">
+                {{ syncing() === 'forcePush' ? 'Force pushing…' : confirmForce() ? 'Confirm force push' : 'Force push' }}
+              </button>
+              @if (confirmForce() && !syncing()) {
+                <button type="button" class="link" (click)="confirmForce.set(false)">cancel</button>
+              }
+            }
           </span>
         }
       }
@@ -134,6 +144,11 @@ export class GitTab {
   /** Network action in flight (one at a time), and the last one's outcome. */
   protected readonly syncing = signal<SyncAction | null>(null);
   protected readonly note = signal<string | null>(null);
+  /** First Force push click arms it; resets whenever the upstream moves (or the worktree changes). */
+  protected readonly confirmForce = linkedSignal({
+    source: () => `${this.wt().path}|${this.graph()?.sync.upstreamSha}`,
+    computation: () => false,
+  });
   /** Compose commit (smart feature) running or finished in this worktree. */
   protected readonly composingHere = computed(() => !!this.api.composing()[this.wt().path]);
   /** Fetch/pull/push wait while a smart feature rewrites this worktree. */
@@ -227,15 +242,23 @@ export class GitTab {
     });
   }
 
+  /** Two clicks: the first asks for confirmation, the second force-pushes. */
+  protected forcePush() {
+    if (!this.confirmForce()) return this.confirmForce.set(true);
+    this.confirmForce.set(false);
+    this.sync('forcePush');
+  }
+
   /** Fetch / pull / push this worktree's branch; the note reports what happened. */
   protected sync(action: SyncAction, quiet = false) {
     const path = this.wt().path;
+    const expect = action === 'forcePush' ? (this.graph()?.sync.upstreamSha ?? undefined) : undefined;
     this.syncing.set(action);
     if (!quiet) {
       this.error.set(null);
       this.note.set(null);
     }
-    this.api.gitAction(path, { action }).subscribe({
+    this.api.gitAction(path, { action, expect }).subscribe({
       next: ({ note }) => {
         this.syncing.set(null);
         lastFetch.set(path, Date.now());

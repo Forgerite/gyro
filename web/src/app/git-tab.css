@@ -109,6 +109,10 @@ h3 .scope { float: right; text-transform: none; letter-spacing: 0; font-weight: 
 .act:disabled { cursor: default; color: var(--muted); }
 .act.due { border-color: var(--accent); }
 .cnt { font-weight: 600; color: var(--accent); }
+/* Force push rewrites the remote branch: danger-coloured, stronger once armed. */
+.act.force { color: var(--danger); }
+.act.force:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+.act.force.confirm { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, var(--panel)); }
 .msg { min-height: 16px; font-size: 11px; padding-top: 2px; white-space: pre-line; }
 .note { color: var(--text-2); }
 .msg { display: flex; flex-direction: column; gap: 2px; }

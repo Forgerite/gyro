@@ -324,6 +324,8 @@ export interface BranchSync {
   /** e.g. "origin/feature"; null when the branch isn't published (or its remote branch is gone). */
   upstream: string | null;
   merge: string | null;
+  /** The upstream's commit as of the last fetch; a force push is leased to it. */
+  upstreamSha: string | null;
   ahead: number;
   behind: number;
 }

@@ -578,12 +578,12 @@ const server = createServer(async (req, res) => {
       // From the conversion session's shell (curl sends no Origin, which originOk allows).
       if (req.url === '/api/gyro/report') return send(res, 200, await gyroReport(await readJson(req)));
       if (req.url === '/api/git/action') {
-        const { path, action, files, all, message, file, view, hunk } = await readJson(req);
+        const { path, action, files, all, message, file, view, hunk, expect } = await readJson(req);
         const found = await knownWorktree(path);
         if (!found) return send(res, 400, { error: 'unknown worktree' });
         const wt = { path: found.path, git: { trunk: found.git?.trunk ?? null } };
         try {
-          const result = await detail('gitAction', { path: wt, action, files, all, message, file, view, hunk });
+          const result = await detail('gitAction', { path: wt, action, files, all, message, file, view, hunk, expect });
           return send(res, 200, result);
         } finally {
           scan('touch', wt.path).catch(() => {}); // tiles' ●/◆ flags catch up on the next scan

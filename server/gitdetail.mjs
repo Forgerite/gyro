@@ -91,7 +91,7 @@ export function gitDetail(findWorktree) {
   async function branchSync(wt) {
     const branch = (await git(wt.path, 'symbolic-ref', '--short', '-q', 'HEAD').catch(() => '')).trim() || null;
     const remotes = lines(await git(wt.path, 'remote').catch(() => ''));
-    const base = { branch, remote: remotes.includes('origin') ? 'origin' : (remotes[0] ?? null), upstream: null, merge: null, ahead: 0, behind: 0 };
+    const base = { branch, remote: remotes.includes('origin') ? 'origin' : (remotes[0] ?? null), upstream: null, merge: null, upstreamSha: null, ahead: 0, behind: 0 };
     if (!branch) return base;
     const upstream = (await git(wt.path, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}').catch(() => '')).trim();
     if (!upstream) return base;
@@ -100,11 +100,16 @@ export function gitDetail(findWorktree) {
     // A local upstream (remote ".") is just another branch; push/pull to it isn't what these buttons mean.
     if (!remote || remote === '.' || !merge) return base;
     const [ahead, behind] = (await git(wt.path, 'rev-list', '--left-right', '--count', 'HEAD...@{u}')).trim().split(/\s+/).map(Number);
-    return { branch, remote, upstream, merge, ahead, behind };
+    const upstreamSha = (await git(wt.path, 'rev-parse', '@{u}')).trim();
+    return { branch, remote, upstream, merge, upstreamSha, ahead, behind };
   }
 
-  /** Fetch, pull (fast-forward only) or push this worktree's branch. Returns a one-line note. */
-  async function syncAction(wt, action) {
+  /**
+   * Fetch, pull (fast-forward only), push or force-push this worktree's branch. Returns a one-line note.
+   * forcePush takes `expect`: the upstream commit the user saw. The push is leased to it, so anything
+   * pushed (or fetched) since then makes it fail instead of being overwritten.
+   */
+  async function syncAction(wt, action, expect) {
     const s = await branchSync(wt);
     if (!s.branch) throw new Error('HEAD is detached; check out a branch first');
     if (!s.remote) throw new Error('This repository has no remote');
@@ -144,9 +149,21 @@ export function gitDetail(findWorktree) {
       if (!s.ahead) return `Nothing to push; ${s.upstream} already has these commits`;
       await run('push', s.remote, `refs/heads/${s.branch}:${s.merge}`).catch((e) => {
         if (!/rejected|non-fast-forward|fetch first/.test(e.message)) throw e;
-        throw new Error(`${s.upstream} has commits this branch doesn't; pull (or rebase in the terminal), then push`);
+        throw new Error(s.behind
+          ? `${s.upstream} has ${n(s.behind, "this branch doesn't")}; pull or rebase, then push, or force push to replace them`
+          : `${s.upstream} has commits this branch doesn't; pull (or rebase in the terminal), then push`);
       });
       return `Pushed ${n(s.ahead, `to ${s.upstream}`)}`;
+    }
+    if (action === 'forcePush') {
+      if (!s.upstream) throw new Error(`${s.branch} isn't on ${s.remote} yet; publish it instead`);
+      if (!expect || expect !== s.upstreamSha) throw new Error(`${s.upstream} has moved since you looked; review it, then try again`);
+      if (!s.behind) return s.ahead ? 'Nothing to overwrite; use Push' : `Nothing to push; ${s.upstream} already has these commits`;
+      await run('push', `--force-with-lease=${s.merge}:${expect}`, s.remote, `refs/heads/${s.branch}:${s.merge}`).catch((e) => {
+        if (!/stale info|rejected/.test(e.message)) throw e;
+        throw new Error(`${s.upstream} has commits you haven't fetched; fetch and review them, then try again`);
+      });
+      return `Force-pushed ${s.branch} to ${s.upstream}, replacing ${n(s.behind, 'there')}`;
     }
     throw new Error('unknown action');
   }
@@ -239,10 +256,10 @@ export function gitDetail(findWorktree) {
    *  - discard: tracked files are restored from the index (staged work survives); untracked files
    *    are deleted. The UI confirms first.
    */
-  async function gitAction({ path, action, files, all, message, file, view, hunk }) {
+  async function gitAction({ path, action, files, all, message, file, view, hunk, expect }) {
     const wt = await requireWorktree(path);
-    if (action === 'fetch' || action === 'pull' || action === 'push') {
-      const note = await syncAction(wt, action);
+    if (action === 'fetch' || action === 'pull' || action === 'push' || action === 'forcePush') {
+      const note = await syncAction(wt, action, expect);
       return { ...(await gitChanges(wt)), note };
     }
     if (action === 'stageHunk' || action === 'unstageHunk') {

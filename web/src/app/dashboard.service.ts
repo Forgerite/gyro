@@ -240,7 +240,7 @@ export class DashboardService {
   gitAction(
     path: string,
     body: {
-      action: 'stage' | 'unstage' | 'discard' | 'commit' | 'stageHunk' | 'unstageHunk' | 'fetch' | 'pull' | 'push';
+      action: 'stage' | 'unstage' | 'discard' | 'commit' | 'stageHunk' | 'unstageHunk' | 'fetch' | 'pull' | 'push' | 'forcePush';
       files?: string[];
       all?: boolean;
       message?: string;
@@ -248,6 +248,8 @@ export class DashboardService {
       file?: string;
       view?: DiffSide;
       hunk?: number;
+      /** forcePush: the upstream commit the user saw; the push fails if the remote has moved from it. */
+      expect?: string;
     },
   ) {
     return this.http.post<{ files: ChangedFile[]; note?: string }>('/api/git/action', { path, ...body });
