@@ -10,10 +10,12 @@ const FS = '\x1f'; // field separator in --format output
 const RS = '\x1e'; // record separator
 /** git's well-known empty tree, for diffing a root commit. */
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+/** Skip git's optional index refresh, so polling status/diff never holds index.lock against a stage or commit. */
+const GIT_ENV = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
 
 /** Interactive requests skip the scan's git queue so a background scan can't delay them. */
 async function git(cwd, ...args) {
-  const { stdout } = await exec('git', args, { cwd, windowsHide: true, maxBuffer: 16 << 20 });
+  const { stdout } = await exec('git', args, { cwd, windowsHide: true, maxBuffer: 16 << 20, env: GIT_ENV });
   return stdout;
 }
 
@@ -26,12 +28,19 @@ async function gitNet(cwd, ...args) {
   return stdout + stderr;
 }
 
+/** A git failure as a short message: its fatal:/error: lines (the cause), else the last few lines. */
+const gitError = (e) => {
+  const ls = (e.stderr || e.message || '').trim().split(/\r?\n/);
+  const cause = ls.filter((l) => /^(fatal|error):/.test(l));
+  return (cause.length ? cause : ls.slice(-3)).join('\n');
+};
+
 const lines = (s) => s.split(/\r?\n/).filter(Boolean);
 
 /** Run git with `input` on stdin (git apply reads the patch from "-"). */
 function gitInput(cwd, args, input) {
   return new Promise((resolve, reject) => {
-    const child = execFile('git', args, { cwd, windowsHide: true, maxBuffer: 16 << 20 }, (err, stdout, stderr) => {
+    const child = execFile('git', args, { cwd, windowsHide: true, maxBuffer: 16 << 20, env: GIT_ENV }, (err, stdout, stderr) => {
       if (err) reject(Object.assign(err, { stderr }));
       else resolve(stdout);
     });
@@ -240,7 +249,7 @@ export function gitDetail(findWorktree) {
       const v = action === 'stageHunk' ? 'unstaged' : 'staged';
       if (view && view !== v) throw new Error('Hunk action does not match the view');
       await applyHunk(wt, file, v, hunk).catch((e) => {
-        throw new Error((e.stderr || e.message || '').trim().split('\n').slice(-3).join('\n'));
+        throw new Error(gitError(e));
       });
       return gitChanges(wt);
     }
@@ -250,7 +259,7 @@ export function gitDetail(findWorktree) {
     const isStaged = (f) => f.x !== ' ' && f.x !== '?';
     const run = (...args) =>
       git(wt.path, ...args).catch((e) => {
-        throw new Error((e.stderr || e.message || '').trim().split('\n').slice(-3).join('\n'));
+        throw new Error(gitError(e));
       });
 
     if (action === 'commit') {
