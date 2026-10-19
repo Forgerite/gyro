@@ -47,7 +47,7 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, looseS
             (click)="select.emit(wt.path)"
             (dblclick)="activate.emit(wt.path)"
           >
-            <span class="dot" role="img" [attr.aria-label]="label(state, !!s?.live)"></span>
+            <span class="dot" role="img" [attr.aria-label]="wtLabel(wt)"></span>
             <span class="name" [title]="wt.path">
               {{ wt.name }}
               @if (wt.branch && wt.branch !== wt.name) { <span class="branch">{{ wt.branch }}</span> }
@@ -171,12 +171,21 @@ export class WorkspaceCard {
     return wt.sessions.filter((s) => s.live).length;
   }
 
-  /** A session still booting in the dock counts as working. */
+  /** A session still booting in the dock, or the PR's CI still running, counts as working. */
   protected stateOf(wt: Worktree): State {
     if (this.api.smartBusy(wt.path)) return 'busy'; // Claude is composing or rebasing here
     const st = this.api.starting()[wt.path];
     if (st && !st.failed) return 'busy';
+    if (wt.pr?.checks === 'pending') return 'busy';
     return sessionState(wt.sessions[0]);
+  }
+
+  protected wtLabel(wt: Worktree) {
+    const s = wt.sessions[0];
+    const st = this.api.starting()[wt.path];
+    const claudeBusy = this.api.smartBusy(wt.path) || (st && !st.failed) || sessionState(s) === 'busy';
+    if (!claudeBusy && wt.pr?.checks === 'pending') return 'PR checks running';
+    return this.label(this.stateOf(wt), !!s?.live);
   }
 
   /** Loose sessions only colour the card while running; a dock terminal still booting counts as working. */
