@@ -1,5 +1,5 @@
 import { HttpErrorResponse, httpResource } from '@angular/common/http';
-import { Component, computed, effect, inject, input, untracked } from '@angular/core';
+import { Component, computed, effect, inject, input, linkedSignal, untracked } from '@angular/core';
 import { AgoPipe } from './ago.pipe';
 import { DashboardService } from './dashboard.service';
 import { PrLine } from './pr-line';
@@ -28,9 +28,11 @@ export class PrTab {
   protected readonly api = inject(DashboardService);
   protected readonly now = this.api.now;
 
-  /** The open PR's number: from the snapshot, or the one Claude just opened. */
+  /** Squash-merged from here: GitHub's read of it right after. */
+  private readonly merged = computed(() => this.api.prMerged()[this.wt().path] ?? null);
+  /** The PR's number: from the snapshot, the one Claude just opened, or the one just merged here. */
   protected readonly number = computed(
-    () => this.wt().pr?.number ?? this.api.prCreated()[this.wt().path]?.result?.pr.number ?? null,
+    () => this.wt().pr?.number ?? this.api.prCreated()[this.wt().path]?.result?.pr.number ?? this.merged()?.number ?? null,
   );
 
   private readonly res = httpResource<PrDetail>(() => {
@@ -40,8 +42,12 @@ export class PrTab {
   private readonly cacheKey = computed(() => `${this.wt().path}#${this.number()}`);
   /** The fresh read, else the last one seen (so switching tabs doesn't blank it while it re-reads). */
   protected readonly pr = computed(() => {
-    const fresh = this.res.hasValue() && this.res.value().number === this.number() ? this.res.value() : null;
-    return fresh ?? (this.number() ? (lastRead.get(this.cacheKey()) ?? null) : null);
+    const n = this.number();
+    const fresh = this.res.hasValue() && this.res.value().number === n ? this.res.value() : null;
+    const m = this.merged()?.number === n ? this.merged() : null;
+    // The merge's read beats a read from before it.
+    if (m && (!fresh || m.fetchedAt > fresh.fetchedAt)) return m;
+    return fresh ?? (n ? (lastRead.get(this.cacheKey()) ?? null) : null);
   });
   protected readonly loading = computed(() => this.res.isLoading());
   protected readonly errorText = computed(() => {
@@ -95,6 +101,25 @@ export class PrTab {
       default: return { tone: 'muted', text: 'GitHub is still working out whether it can merge' };
     }
   });
+
+  /** Squash-merge is offered once nothing stands in the way: mergeable, and no check failing or running. */
+  protected readonly canMerge = computed(() => {
+    const p = this.pr();
+    const t = this.tally();
+    return !!p && p.state === 'OPEN' && !p.draft && p.mergeable === 'MERGEABLE'
+      && (p.mergeState === 'CLEAN' || p.mergeState === 'HAS_HOOKS') && !t.fail && !t.running && !!p.headSha;
+  });
+  /** Asked to merge once; the second click merges. Forgotten when the head commit moves. */
+  protected readonly confirmMerge = linkedSignal({ source: () => this.pr()?.headSha, computation: () => false });
+  protected readonly merging = computed(() => !!this.api.merging()[this.wt().path]);
+
+  protected squashMerge(): void {
+    const n = this.number();
+    if (!n || !this.canMerge()) return;
+    if (!this.confirmMerge()) return this.confirmMerge.set(true);
+    this.confirmMerge.set(false);
+    this.api.mergePr(this.wt().path, n);
+  }
 
   /** Claude running in this worktree's dock terminal. */
   private readonly running = computed(() =>

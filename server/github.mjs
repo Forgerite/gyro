@@ -172,7 +172,7 @@ const PR_QUERY = `query($o:String!,$n:String!,$num:Int!){ repository(owner:$o,na
   reviewRequests(first:10){nodes{requestedReviewer{ ... on User{login} ... on Team{name} ... on Bot{login} ... on Mannequin{login} }}}
   latestOpinionatedReviews(first:20){nodes{author{login} state submittedAt}}
   closingIssuesReferences(first:10){nodes{number title url}}
-  commits(last:1){ totalCount nodes{ commit{ abbreviatedOid statusCheckRollup{ contexts(first:100){ nodes{ __typename
+  commits(last:1){ totalCount nodes{ commit{ oid abbreviatedOid statusCheckRollup{ contexts(first:100){ nodes{ __typename
     ... on CheckRun{ name status conclusion detailsUrl startedAt completedAt checkSuite{ workflowRun{ workflow{ name } } } }
     ... on StatusContext{ context state targetUrl description }
   } } } } } }
@@ -237,6 +237,8 @@ export async function prDetail(repo, number) {
     changedFiles: p.changedFiles,
     commits: p.commits.totalCount,
     head: head?.abbreviatedOid ?? null,
+    /** The head commit's full SHA: a merge is pinned to it. */
+    headSha: head?.oid ?? null,
     /** MERGEABLE, CONFLICTING or UNKNOWN (GitHub is still working it out). */
     mergeable: p.mergeable,
     /** CLEAN, BLOCKED, BEHIND, DIRTY, UNSTABLE, DRAFT, HAS_HOOKS or UNKNOWN. */
@@ -253,6 +255,30 @@ export async function prDetail(repo, number) {
     commentCount: p.comments.totalCount,
     fetchedAt: Date.now(),
   };
+}
+
+/** Merge states GitHub reports when nothing stands in the way. */
+const READY = new Set(['CLEAN', 'HAS_HOOKS']);
+
+/** Why PR `p` (from prDetail) can't be squash-merged from ccdb yet, or null when it can. */
+export function whyNotMergeable(p) {
+  if (p.state !== 'OPEN') return `PR #${p.number} is ${p.state.toLowerCase()}`;
+  if (p.draft) return `PR #${p.number} is a draft`;
+  if (p.mergeable !== 'MERGEABLE' || !READY.has(p.mergeState)) return `PR #${p.number} isn't ready to merge (${p.mergeState.toLowerCase()})`;
+  if (p.checks.some((c) => c.result === 'fail')) return `Checks are failing on PR #${p.number}`;
+  if (p.checks.some((c) => c.result === 'running')) return `Checks are still running on PR #${p.number}`;
+  if (!p.headSha) return `GitHub didn't say what PR #${p.number}'s head commit is`;
+  return null;
+}
+
+/**
+ * Squash-merge PR `number` of `repo`, pinned to head commit `sha`: if anything was pushed since it
+ * was checked, GitHub refuses. The branch is left alone; its worktree may still be using it.
+ */
+export async function mergePr(repo, number, sha) {
+  if (!REPO.test(repo ?? '')) throw new Error('Bad repo');
+  if (!/^[0-9a-f]{40}$/i.test(sha ?? '')) throw new Error('Bad head commit');
+  await gh(['pr', 'merge', String(number), '--repo', repo, '--squash', '--match-head-commit', sha], 60_000);
 }
 
 // ---------- GitHub Project board ----------

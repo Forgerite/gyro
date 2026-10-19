@@ -20,7 +20,18 @@
         }
       </div>
       @if (merge(); as m) {
-        <div class="merge" [class]="m.tone" role="status">{{ m.text }}</div>
+        <div class="merge-row">
+          <div class="merge" [class]="m.tone" role="status">{{ m.text }}</div>
+          @if (canMerge() || merging()) {
+            <button type="button" class="squash" [class.confirm]="confirmMerge()" (click)="squashMerge()" [disabled]="merging()"
+              [title]="'Squash the branch into one commit on ' + p.base + ' through GitHub'">
+              {{ merging() ? 'Merging…' : confirmMerge() ? 'Confirm squash and merge' : 'Squash and merge' }}
+            </button>
+            @if (confirmMerge() && !merging()) {
+              <button type="button" class="link" (click)="confirmMerge.set(false)">cancel</button>
+            }
+          }
+        </div>
       }
     </section>
   }

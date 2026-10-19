@@ -37,6 +37,18 @@ a.tag:hover { border-color: var(--accent); color: var(--accent); }
 .merge.warn { color: var(--dirty); border-color: color-mix(in srgb, var(--dirty) 50%, var(--border)); }
 .merge.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); }
 .merge.muted { color: var(--text-2); font-weight: 400; }
+.merge-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+
+/* Squash and merge: the first click asks, the second merges. */
+.squash {
+  padding: 3px 10px; font: inherit; font-weight: 600; cursor: pointer;
+  color: var(--add); background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--add) 60%, var(--border)); border-radius: 5px; box-shadow: 0 1px 0 var(--border);
+}
+.squash:hover:not(:disabled) { border-color: var(--add); background: var(--hover); }
+.squash:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+.squash.confirm { border-color: var(--add); background: color-mix(in srgb, var(--add) 14%, var(--panel)); }
+.squash:disabled { opacity: 0.6; cursor: default; }
 
 /* Section headings */
 section { display: grid; gap: 6px; min-width: 0; }

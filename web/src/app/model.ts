@@ -166,6 +166,8 @@ export interface PrDetail {
   changedFiles: number;
   commits: number;
   head: string | null;
+  /** The head commit's full SHA. */
+  headSha: string | null;
   mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
   mergeState: string;
   review: string | null;

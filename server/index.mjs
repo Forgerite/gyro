@@ -8,7 +8,7 @@ import { basename, join, resolve } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import { getDev, getGithub, isClosed, setClosed, setDev, setGithub } from './state.mjs';
-import { entryBrief, githubOptions, moveEntry, openPulls, prDetail, projectBoard, projectEntry, resolveLink } from './github.mjs';
+import { entryBrief, githubOptions, mergePr, moveEntry, openPulls, prDetail, projectBoard, projectEntry, resolveLink, whyNotMergeable } from './github.mjs';
 import { findReports, serveReport } from './reports.mjs';
 import { leasePorts, loadExcludedPorts, portsOf, releasePorts } from './ports.mjs';
 import { allGyro, finishGyro, gyroBrief, gyroOf, noteGyro, recordGyro, reportStep, startGyro } from './gyro.mjs';
@@ -634,6 +634,25 @@ const server = createServer(async (req, res) => {
             .catch((e) => { throw httpError(409, e.message); }));
         } finally {
           await pullsFor(github.repo, true).pending; // the tile and panel show the new PR on the next snapshot
+          scan('touch', found.path).catch(() => {});
+        }
+      }
+      if (req.url === '/api/github/pr/merge') {
+        const { path, number } = await readJson(req);
+        const found = await knownWorktree(path);
+        if (!found) return send(res, 400, { error: 'unknown worktree' });
+        const github = getGithub(found.repo ?? found.path);
+        if (!github) return send(res, 400, { error: 'This project is not linked to GitHub' });
+        if (!Number.isInteger(number) || number < 1) return send(res, 400, { error: 'bad PR number' });
+        // Judge by a fresh read, not by what the page last saw.
+        const pr = await prDetail(github.repo, number).catch((e) => { throw httpError(502, e.message); });
+        const why = whyNotMergeable(pr);
+        if (why) return send(res, 409, { error: why });
+        try {
+          await mergePr(github.repo, number, pr.headSha).catch((e) => { throw httpError(409, e.message); });
+          return send(res, 200, await prDetail(github.repo, number).catch(() => ({ ...pr, state: 'MERGED' })));
+        } finally {
+          await pullsFor(github.repo, true).pending; // the tile drops the PR on the next snapshot
           scan('touch', found.path).catch(() => {});
         }
       }

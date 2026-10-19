@@ -1,7 +1,7 @@
 import { DestroyRef, Service, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
-import { ChangedFile, CommitInfo, EntryTarget, Snapshot, Term } from './model';
+import { ChangedFile, CommitInfo, EntryTarget, PrDetail, Snapshot, Term } from './model';
 
 const POLL_MS = 3000;
 const PANEL_TAB_KEY = 'ccdb.panelTab';
@@ -184,6 +184,28 @@ export class DashboardService {
       error: (e) => {
         done();
         if (placed) this.doneStarting(path);
+        this.error.set(e.error?.error ?? e.message);
+      },
+    });
+  }
+
+  /** Squash-merges in flight, by worktree path; and each worktree's PR as it read once merged. */
+  readonly merging = signal<Record<string, true>>({});
+  readonly prMerged = signal<Record<string, PrDetail>>({});
+
+  /** Squash-merge PR `number` through GitHub. The server re-checks it's ready first. */
+  mergePr(path: string, number: number): void {
+    if (this.merging()[path]) return;
+    this.merging.update((m) => ({ ...m, [path]: true }));
+    const done = () => this.merging.update(({ [path]: _, ...rest }) => rest);
+    this.http.post<PrDetail>('/api/github/pr/merge', { path, number }).subscribe({
+      next: (pr) => {
+        done();
+        this.prMerged.update((m) => ({ ...m, [path]: pr }));
+        this.refresh(); // the snapshot drops the PR from the open list
+      },
+      error: (e) => {
+        done();
         this.error.set(e.error?.error ?? e.message);
       },
     });
