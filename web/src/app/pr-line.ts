@@ -126,7 +126,7 @@ export class PrLine {
     if (p) return p;
     const o = this.outcome();
     const fresh = o?.result && (this.ws().pulls?.at ?? 0) < (o.at ?? 0);
-    return fresh ? { ...o.result!.pr, draft: false, review: null, checks: null, base: null } : null;
+    return fresh ? { ...o.result!.pr, draft: false, review: null, checks: null, checksRunning: false, base: null } : null;
   });
   protected readonly review = computed(() => reviewText(this.pr()?.review ?? null));
 

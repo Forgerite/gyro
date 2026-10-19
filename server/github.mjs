@@ -118,14 +118,22 @@ export async function resolveLink({ repo, project: p }) {
 // ---------- pull requests ----------
 
 const FAILED = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
+const RUNNING = new Set(['PENDING', 'EXPECTED', 'IN_PROGRESS', 'QUEUED', 'WAITING', 'REQUESTED']);
+
+const rollupStates = (rollup) =>
+  (rollup ?? []).map((c) => (c.__typename === 'StatusContext' ? c.state : c.status === 'COMPLETED' ? c.conclusion : 'PENDING'));
+
 /** One word for a PR's checks: fail beats pending beats pass; null when it has none. */
 function checks(rollup) {
-  if (!rollup?.length) return null;
-  const states = rollup.map((c) => (c.__typename === 'StatusContext' ? c.state : c.status === 'COMPLETED' ? c.conclusion : 'PENDING'));
+  const states = rollupStates(rollup);
+  if (!states.length) return null;
   if (states.some((s) => FAILED.has(s))) return 'fail';
-  if (states.some((s) => ['PENDING', 'EXPECTED', 'IN_PROGRESS', 'QUEUED', 'WAITING', 'REQUESTED'].includes(s))) return 'pending';
+  if (states.some((s) => RUNNING.has(s))) return 'pending';
   return 'pass';
 }
+
+/** Whether any check is still running, whatever the others concluded. */
+const checksRunning = (rollup) => rollupStates(rollup).some((s) => RUNNING.has(s));
 
 /** The repo's open PRs from its own branches (forks can't be a local worktree's branch). */
 export async function openPulls(repo) {
@@ -142,6 +150,7 @@ export async function openPulls(repo) {
       draft: p.isDraft,
       review: p.reviewDecision || null,
       checks: checks(p.statusCheckRollup),
+      checksRunning: checksRunning(p.statusCheckRollup),
       author: p.author?.login ?? null,
       updatedAt: Date.parse(p.updatedAt) || null,
       closes: (p.closingIssuesReferences ?? []).map((i) => i.number),
@@ -170,8 +179,6 @@ const PR_QUERY = `query($o:String!,$n:String!,$num:Int!){ repository(owner:$o,na
   comments(last:30){ totalCount nodes{ id author{login} createdAt bodyHTML url } }
   reviews(last:30){ nodes{ id author{login} state submittedAt bodyHTML url } }
 } } }`;
-
-const RUNNING = new Set(['PENDING', 'EXPECTED', 'IN_PROGRESS', 'QUEUED', 'WAITING', 'REQUESTED']);
 
 /** One CI check: pass, fail, running or skipped, with where to read its log. */
 function prCheck(c) {

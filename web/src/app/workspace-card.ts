@@ -176,7 +176,7 @@ export class WorkspaceCard {
     if (this.api.smartBusy(wt.path)) return 'busy'; // Claude is composing or rebasing here
     const st = this.api.starting()[wt.path];
     if (st && !st.failed) return 'busy';
-    if (wt.pr?.checks === 'pending') return 'busy';
+    if (wt.pr?.checksRunning) return 'busy';
     return sessionState(wt.sessions[0]);
   }
 
@@ -184,7 +184,7 @@ export class WorkspaceCard {
     const s = wt.sessions[0];
     const st = this.api.starting()[wt.path];
     const claudeBusy = this.api.smartBusy(wt.path) || (st && !st.failed) || sessionState(s) === 'busy';
-    if (!claudeBusy && wt.pr?.checks === 'pending') return 'PR checks running';
+    if (!claudeBusy && wt.pr?.checksRunning) return 'PR checks running';
     return this.label(this.stateOf(wt), !!s?.live);
   }
 

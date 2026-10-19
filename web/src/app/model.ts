@@ -126,6 +126,8 @@ export interface PullRequest {
   /** APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, or null when no review is needed. */
   review: string | null;
   checks: 'pass' | 'fail' | 'pending' | null;
+  /** Some check is still running, even if another has already failed. */
+  checksRunning: boolean;
   author: string | null;
   updatedAt: number | null;
   /** Issue numbers this PR closes. */
