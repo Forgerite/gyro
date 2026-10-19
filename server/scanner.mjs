@@ -22,12 +22,15 @@ const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const GIT_CONCURRENCY = 8;
 let gitRunning = 0;
 const gitQueue = [];
+// Background status must not take index.lock: a scan landing mid-click made `git add` fail with
+// "index.lock exists", and a scan killed mid-refresh can leave a stale lock behind.
+const GIT_ENV = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
 
 async function git(cwd, ...args) {
   if (gitRunning >= GIT_CONCURRENCY) await new Promise((r) => gitQueue.push(r));
   gitRunning++;
   try {
-    const { stdout } = await exec('git', args, { cwd, windowsHide: true, maxBuffer: 8 << 20 });
+    const { stdout } = await exec('git', args, { cwd, windowsHide: true, maxBuffer: 8 << 20, env: GIT_ENV });
     return stdout;
   } finally {
     gitRunning--;
