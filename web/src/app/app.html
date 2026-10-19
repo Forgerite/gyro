@@ -22,7 +22,7 @@
     </button>
     <span class="spacer"></span>
     @if (api.error(); as err) { <span class="error" role="alert">{{ err }}</span> }
-    <span class="hint"><kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> open/resume · <kbd>u</kbd> up · <kbd>c</kbd> code · <kbd>g</kbd> git</span>
+    <span class="hint"><kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> open/resume · <kbd>u</kbd> up · <kbd>c</kbd> code · <kbd>g</kbd> git · <kbd>p</kbd> PR</span>
     <button type="button" class="wide-btn" (click)="toggleWide()" [attr.aria-pressed]="detailWide()"
             [title]="(detailWide() ? 'Contract' : 'Expand') + ' the detail panel (e)'">
       <svg viewBox="0 0 16 16" aria-hidden="true">

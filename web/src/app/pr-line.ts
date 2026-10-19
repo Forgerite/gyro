@@ -12,6 +12,7 @@ import { CHECKS, reviewText } from './wt-flags';
   selector: 'app-pr-line',
   template: `
     @if (pr(); as p) {
+      @if (showPr()) {
       <div class="row">
         <span class="lbl">PR</span>
         <div class="val">
@@ -24,6 +25,7 @@ import { CHECKS, reviewText } from './wt-flags';
           @if (p.base) { <span class="tag">→ {{ p.base }}</span> }
         </div>
       </div>
+      }
     } @else if (base(); as b) {
       <div class="row">
         <span class="lbl">PR</span>
@@ -103,11 +105,13 @@ import { CHECKS, reviewText } from './wt-flags';
     }
     @keyframes spin { to { transform: rotate(360deg); } }
   `,
-  host: { '[hidden]': '!pr() && !base() && !outcome() && !entries().length' },
+  host: { '[hidden]': '!(pr() ? showPr() : base()) && !outcome() && !entries().length' },
 })
 export class PrLine {
   readonly wt = input.required<Worktree>();
   readonly ws = input.required<Workspace>();
+  /** The open PR's own row; off where the PR is already shown in full. */
+  readonly showPr = input(true);
 
   protected readonly api = inject(DashboardService);
   protected readonly checks = CHECKS;

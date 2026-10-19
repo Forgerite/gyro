@@ -8,7 +8,7 @@ import { basename, join, resolve } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import { getDev, getGithub, isClosed, setClosed, setDev, setGithub } from './state.mjs';
-import { entryBrief, githubOptions, moveEntry, openPulls, projectBoard, projectEntry, resolveLink } from './github.mjs';
+import { entryBrief, githubOptions, moveEntry, openPulls, prDetail, projectBoard, projectEntry, resolveLink } from './github.mjs';
 import { findReports, serveReport } from './reports.mjs';
 import { leasePorts, loadExcludedPorts, portsOf, releasePorts } from './ports.mjs';
 import { allGyro, finishGyro, gyroBrief, gyroOf, noteGyro, recordGyro, reportStep, startGyro } from './gyro.mjs';
@@ -502,6 +502,16 @@ const server = createServer(async (req, res) => {
       const github = getGithub((await knownProject(url.searchParams.get('path'))).path);
       if (!github?.project) return send(res, 400, { error: 'No GitHub Project is linked to this project' });
       return send(res, 200, await projectEntry(github.project, url.searchParams.get('id')).catch((e) => { throw httpError(502, e.message); }));
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/github/pr?')) {
+      const url = new URL(req.url, 'http://localhost');
+      const found = await knownWorktree(url.searchParams.get('path'));
+      if (!found) return send(res, 400, { error: 'unknown worktree' });
+      const github = getGithub(found.repo ?? found.path);
+      if (!github) return send(res, 400, { error: 'This project is not linked to GitHub' });
+      const number = Number(url.searchParams.get('number'));
+      if (!Number.isInteger(number) || number < 1) return send(res, 400, { error: 'bad PR number' });
+      return send(res, 200, await prDetail(github.repo, number).catch((e) => { throw httpError(502, e.message); }));
     }
     if (req.method === 'GET' && req.url.startsWith('/api/git/')) {
       const url = new URL(req.url, 'http://localhost');

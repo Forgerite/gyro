@@ -1,0 +1,128 @@
+<div class="scroll" (click)="externalLinks($event)">
+  @if (pr(); as p) {
+    <section class="head" aria-label="Pull request">
+      <h3>
+        <a [href]="p.url" target="_blank" rel="noopener" class="num">#{{ p.number }}</a>
+        {{ p.title }}
+      </h3>
+      <div class="meta">
+        @if (p.state !== 'OPEN') { <span class="tag" [class.ok]="p.state === 'MERGED'">{{ p.state.toLowerCase() }}</span> }
+        @if (p.draft) { <span class="tag">draft</span> }
+        <span><code>{{ p.branch }}</code> → <code>{{ p.base }}</code></span>
+        @if (p.author) { <span>by {{ p.author }}</span> }
+        @if (p.createdAt) { <span>opened {{ p.createdAt | ago: now() }} ago</span> }
+        <span>{{ p.commits }} commit{{ p.commits === 1 ? '' : 's' }}</span>
+        <span>{{ p.changedFiles }} file{{ p.changedFiles === 1 ? '' : 's' }}</span>
+        <span><span class="add">+{{ p.additions }}</span> <span class="del">−{{ p.deletions }}</span></span>
+        @for (l of p.labels; track l) { <span class="tag">{{ l }}</span> }
+        @for (i of p.closes; track i.number) {
+          <a class="tag" [href]="i.url" target="_blank" rel="noopener" [title]="'Merging this PR closes #' + i.number + ': ' + i.title">closes #{{ i.number }}</a>
+        }
+      </div>
+      @if (merge(); as m) {
+        <div class="merge" [class]="m.tone" role="status">{{ m.text }}</div>
+      }
+    </section>
+  }
+
+  <app-pr-line [wt]="wt()" [ws]="ws()" [showPr]="false" />
+
+  @if (!number() && !ws().pulls) {
+    <p class="empty" role="status"><span class="spin" aria-hidden="true"></span>Checking GitHub for a pull request…</p>
+  } @else if (!number()) {
+    <p class="empty">No open pull request for <code>{{ wt().branch ?? wt().name }}</code>.</p>
+  } @else if (pr(); as p) {
+    <section class="checks" aria-labelledby="checks-h">
+      <div class="sec-head">
+        <h4 id="checks-h">Checks</h4>
+        <span class="summary" [class.bad]="tally().fail" role="status">
+          @if (tally().running) { <span class="spin" aria-hidden="true"></span> }
+          {{ checkSummary() }}
+        </span>
+        <span class="spacer"></span>
+        @if (p.head) { <span class="muted" title="Head commit">{{ p.head }}</span> }
+        <button type="button" class="link" (click)="refresh()" [disabled]="loading()" title="Re-read the PR from GitHub">
+          {{ loading() ? 'Refreshing…' : 'Refresh' }}
+        </button>
+      </div>
+      @if (checks().length) {
+        <div class="bar" aria-hidden="true">
+          @for (s of bar(); track s.kind) { <span [class]="s.kind" [style.width.%]="s.pct"></span> }
+        </div>
+        <ul class="check-list">
+          @for (c of checks(); track c.name + c.workflow) {
+            <li [class]="c.result">
+              <span class="icon" role="img" [attr.aria-label]="resultLabel(c)" [title]="c.conclusion.toLowerCase()">
+                @switch (c.result) {
+                  @case ('pass') { ✓ }
+                  @case ('fail') { ✕ }
+                  @case ('skipped') { ⊘ }
+                  @default { <span class="spin"></span> }
+                }
+              </span>
+              <span class="c-name">
+                @if (c.url) { <a [href]="c.url" target="_blank" rel="noopener">{{ c.name }}</a> } @else { {{ c.name }} }
+                @if (c.workflow) { <span class="muted wf">· {{ c.workflow }}</span> }
+                @if (c.description) { <span class="desc">{{ c.description }}</span> }
+              </span>
+              <span class="dur">{{ duration(c) }}</span>
+            </li>
+          }
+        </ul>
+      }
+    </section>
+
+    <section aria-labelledby="reviews-h">
+      <div class="sec-head">
+        <h4 id="reviews-h">Reviews</h4>
+        @if (reviewWord(); as r) { <span class="summary" [class.bad]="p.review === 'CHANGES_REQUESTED'">{{ r }}</span> }
+      </div>
+      @if (p.reviews.length || p.requested.length) {
+        <ul class="reviews">
+          @for (r of p.reviews; track r.author) {
+            <li [class]="r.state.toLowerCase()">
+              <strong>{{ r.author }}</strong> {{ stateWord(r.state) }}
+              @if (r.at) { <span class="muted">· {{ r.at | ago: now() }} ago</span> }
+            </li>
+          }
+          @for (who of p.requested; track who) {
+            <li class="awaiting"><strong>{{ who }}</strong> <span class="muted">· review requested</span></li>
+          }
+        </ul>
+      } @else {
+        <p class="muted">No reviews yet.</p>
+      }
+    </section>
+
+    <section aria-labelledby="desc-h">
+      <div class="sec-head"><h4 id="desc-h">Description</h4></div>
+      @if (p.bodyHTML) { <div class="md" [innerHTML]="p.bodyHTML"></div> } @else { <p class="muted">No description.</p> }
+    </section>
+
+    @if (p.conversation.length) {
+      <section aria-labelledby="conv-h">
+        <div class="sec-head">
+          <h4 id="conv-h">Conversation</h4>
+          <span class="muted">{{ p.conversation.length }}</span>
+        </div>
+        @if (p.commentCount > p.conversation.length) {
+          <p class="muted">Showing the latest. <a [href]="p.url" target="_blank" rel="noopener">All on GitHub</a></p>
+        }
+        @for (c of p.conversation; track c.id) {
+          <article class="comment" [attr.aria-label]="(c.kind === 'review' ? 'Review by ' : 'Comment by ') + c.author">
+            <div class="c-meta">
+              <strong>{{ c.author }}</strong>
+              @if (c.kind === 'review' && c.state) { {{ stateWord(c.state) }} }
+              @if (c.at) { · <a [href]="c.url" target="_blank" rel="noopener">{{ c.at | ago: now() }} ago</a> }
+            </div>
+            <div class="md" [innerHTML]="c.bodyHTML"></div>
+          </article>
+        }
+      </section>
+    }
+  } @else if (errorText(); as m) {
+    <p class="err" role="alert">{{ m }} <button type="button" class="link" (click)="refresh()">Retry</button></p>
+  } @else {
+    <p class="muted loading" role="status"><span class="spin" aria-hidden="true"></span>Loading PR #{{ number() }}…</p>
+  }
+</div>
