@@ -148,6 +148,13 @@ export async function openPulls(repo) {
     }));
 }
 
+/** The open PR from `branch` in `repo` (asked fresh, not from the cache), or null. */
+export async function prForBranch(repo, branch) {
+  const list = await ghJson(['pr', 'list', '--repo', repo, '--head', branch, '--state', 'open', '--json', 'number,title,url,isCrossRepository,closingIssuesReferences']);
+  const p = list.find((x) => !x.isCrossRepository);
+  return p ? { number: p.number, title: p.title, url: p.url, closes: (p.closingIssuesReferences ?? []).map((i) => i.number) } : null;
+}
+
 // ---------- GitHub Project board ----------
 
 const BOARD_QUERY = `query($o:String!,$n:Int!,$after:String){

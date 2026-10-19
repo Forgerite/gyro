@@ -565,6 +565,32 @@ const server = createServer(async (req, res) => {
           scan('touch', found.path).catch(() => {});
         }
       }
+      if (req.url === '/api/github/pr') {
+        const { path } = await readJson(req);
+        const found = await knownWorktree(path);
+        if (!found) return send(res, 400, { error: 'unknown worktree' });
+        const github = getGithub(found.repo ?? found.path);
+        if (!github) return send(res, 400, { error: 'This project is not linked to GitHub' });
+        const base = github.defaultBranch ?? found.git?.trunk?.replace(/^[^/]+\//, '') ?? null;
+        // The board's open issues, so Claude can link the one this branch addresses. Optional.
+        let project = null;
+        let issues = [];
+        if (github.project) {
+          const board = await boardFor(github).catch(() => null);
+          project = board?.title ?? `${github.project.owner}/${github.project.number}`;
+          const repo = github.repo.toLowerCase();
+          issues = (board?.columns ?? []).flatMap((c) => c.items)
+            .filter((it) => it.kind === 'issue' && !it.done && it.number !== null && it.repo?.toLowerCase() === repo)
+            .map((it) => ({ number: it.number, title: it.title, status: it.status }));
+        }
+        try {
+          return send(res, 200, await detail('createPr', { path: found.path, repo: github.repo, base, project, issues })
+            .catch((e) => { throw httpError(409, e.message); }));
+        } finally {
+          await pullsFor(github.repo, true).pending; // the tile and panel show the new PR on the next snapshot
+          scan('touch', found.path).catch(() => {});
+        }
+      }
       if (req.url === '/api/projects/close') {
         const { path, closed } = await readJson(req);
         return send(res, 200, await closeProject(path, closed !== false));

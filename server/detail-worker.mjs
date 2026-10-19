@@ -5,9 +5,17 @@ import { gitDetail } from './gitdetail.mjs';
 import { createProject, projectCandidates } from './projects.mjs';
 import { composeCommit } from './compose.mjs';
 import { autoRebase } from './rebase.mjs';
+import { createPr } from './pr.mjs';
 import { createWorktree, worktreeBases } from './worktrees.mjs';
 
-const ops = { ...gitDetail(async (wt) => wt), createProject, projectCandidates, composeCommit, autoRebase, createWorktree, worktreeBases };
+const detail = gitDetail(async (wt) => wt);
+/** Create PR pushes with the Git tab's own push first. */
+const pushBranch = (path) => detail.gitAction({ path: { path, git: {} }, action: 'push' });
+
+const ops = {
+  ...detail, createProject, projectCandidates, composeCommit, autoRebase, createWorktree, worktreeBases,
+  createPr: (arg) => createPr(arg, pushBranch),
+};
 
 parentPort.on('message', async ({ id, op, arg }) => {
   try {

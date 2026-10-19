@@ -244,9 +244,34 @@ export class DashboardService {
     if (this.rebased()[path]) this.rebased.update(({ [path]: _, ...rest }) => rest);
   }
 
-  /** A smart feature (compose or rebase) is working in this worktree: other git actions wait. */
+  /** Create PR in flight, by worktree path → start time; and the last outcome per worktree. */
+  readonly creatingPr = signal<Record<string, number>>({});
+  readonly prCreated = signal<Record<string, PrOutcome>>({});
+
+  /** Smart feature: push the branch, then Claude writes the PR (linking its issue) and opens it. */
+  createPr(path: string): void {
+    if (this.smartBusy(path)) return;
+    this.creatingPr.update((m) => ({ ...m, [path]: Date.now() }));
+    this.clearPrCreated(path);
+    const done = (o: PrOutcome) => {
+      this.creatingPr.update(({ [path]: _, ...rest }) => rest);
+      this.prCreated.update((m) => ({ ...m, [path]: o }));
+      this.gitChanged();
+      this.refresh(); // the snapshot carries the new PR
+    };
+    this.http.post<PrResult>('/api/github/pr', { path }).subscribe({
+      next: (r) => done({ result: r, at: Date.now() }),
+      error: (e) => done({ error: e.error?.error ?? e.message }),
+    });
+  }
+
+  clearPrCreated(path: string): void {
+    if (this.prCreated()[path]) this.prCreated.update(({ [path]: _, ...rest }) => rest);
+  }
+
+  /** A smart feature (compose, rebase or PR) is working in this worktree: other git actions wait. */
   smartBusy(path: string): boolean {
-    return !!this.composing()[path] || !!this.rebasing()[path];
+    return !!this.composing()[path] || !!this.rebasing()[path] || !!this.creatingPr()[path];
   }
 
   clearComposed(path: string): void {
@@ -326,6 +351,20 @@ export interface RebaseResult {
 
 export interface RebaseOutcome {
   result?: RebaseResult;
+  error?: string;
+}
+
+export interface PrResult {
+  pr: { number: number; title: string; url: string; closes: number[] };
+  pushNote: string | null;
+  /** e.g. uncommitted files that weren't part of the PR. */
+  warning: string | null;
+}
+
+export interface PrOutcome {
+  result?: PrResult;
+  /** When the PR was created. */
+  at?: number;
   error?: string;
 }
 
