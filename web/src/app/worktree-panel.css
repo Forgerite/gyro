@@ -149,7 +149,13 @@ footer {
 }
 .tabs button:hover { color: var(--text); }
 .tabs button[aria-selected='true'] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-app-git-tab { flex: 1; }
+app-git-tab, app-pr-tab { flex: 1; }
+.pr-badge { font-size: 10px; font-weight: 400; color: var(--text-2); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; font-variant-numeric: tabular-nums; }
+.pr-badge.draft { border-style: dashed; color: var(--muted); }
+.ci { font-size: 10px; line-height: 1; }
+.ci.fail { color: var(--danger); }
+.ci.pass { color: var(--add); }
+.ci.pending { color: var(--dirty); }
 
 /* Header actions: real buttons, not grey text. */
 .acts { display: inline-flex; gap: 6px; margin-left: auto; }

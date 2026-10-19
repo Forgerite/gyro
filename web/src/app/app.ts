@@ -461,6 +461,9 @@ export class App {
       case 'g':
         this.api.setPanelTab(this.api.panelTab() === 'git' ? 'session' : 'git');
         break;
+      case 'p':
+        this.api.setPanelTab(this.api.panelTab() === 'pr' ? 'session' : 'pr');
+        break;
       case '/':
         this.filterInput()?.nativeElement.focus();
         break;

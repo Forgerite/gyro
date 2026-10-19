@@ -155,6 +155,99 @@ export async function prForBranch(repo, branch) {
   return p ? { number: p.number, title: p.title, url: p.url, closes: (p.closingIssuesReferences ?? []).map((i) => i.number) } : null;
 }
 
+const PR_QUERY = `query($o:String!,$n:String!,$num:Int!){ repository(owner:$o,name:$n){ pullRequest(number:$num){
+  number title url state isDraft merged mergedAt createdAt updatedAt bodyHTML
+  author{login} headRefName baseRefName additions deletions changedFiles
+  mergeable mergeStateStatus reviewDecision
+  labels(first:10){nodes{name}} assignees(first:10){nodes{login}}
+  reviewRequests(first:10){nodes{requestedReviewer{ ... on User{login} ... on Team{name} ... on Bot{login} ... on Mannequin{login} }}}
+  latestOpinionatedReviews(first:20){nodes{author{login} state submittedAt}}
+  closingIssuesReferences(first:10){nodes{number title url}}
+  commits(last:1){ totalCount nodes{ commit{ abbreviatedOid statusCheckRollup{ contexts(first:100){ nodes{ __typename
+    ... on CheckRun{ name status conclusion detailsUrl startedAt completedAt checkSuite{ workflowRun{ workflow{ name } } } }
+    ... on StatusContext{ context state targetUrl description }
+  } } } } } }
+  comments(last:30){ totalCount nodes{ id author{login} createdAt bodyHTML url } }
+  reviews(last:30){ nodes{ id author{login} state submittedAt bodyHTML url } }
+} } }`;
+
+const RUNNING = new Set(['PENDING', 'EXPECTED', 'IN_PROGRESS', 'QUEUED', 'WAITING', 'REQUESTED']);
+
+/** One CI check: pass, fail, running or skipped, with where to read its log. */
+function prCheck(c) {
+  if (c.__typename === 'StatusContext') {
+    const result = FAILED.has(c.state) ? 'fail' : RUNNING.has(c.state) ? 'running' : 'pass';
+    return {
+      name: c.context, workflow: null, result, conclusion: c.state, url: c.targetUrl ?? null,
+      // A status only says when it was last set, not how long it ran: no duration.
+      description: c.description || null, startedAt: null, completedAt: null,
+    };
+  }
+  const done = c.status === 'COMPLETED';
+  const result = !done ? 'running' : FAILED.has(c.conclusion) ? 'fail' : ['SKIPPED', 'NEUTRAL', 'STALE'].includes(c.conclusion) ? 'skipped' : 'pass';
+  return {
+    name: c.name, workflow: c.checkSuite?.workflowRun?.workflow?.name ?? null, result, conclusion: done ? c.conclusion : c.status,
+    url: c.detailsUrl ?? null, description: null, startedAt: Date.parse(c.startedAt) || null, completedAt: Date.parse(c.completedAt) || null,
+  };
+}
+
+/** Failures first, then what's still running: what you look at a PR's checks for. */
+const CHECK_ORDER = { fail: 0, running: 1, pass: 2, skipped: 3 };
+
+/** PR `number` of `repo` in full: description, reviews, conversation and every CI check on its head commit. */
+export async function prDetail(repo, number) {
+  if (!REPO.test(repo ?? '')) throw new Error('Bad repo');
+  const [o, n] = repo.split('/');
+  const p = (await ghJson(['api', 'graphql', '-f', `query=${PR_QUERY}`, '-f', `o=${o}`, '-f', `n=${n}`, '-F', `num=${number}`]))
+    .data?.repository?.pullRequest;
+  if (!p) throw new Error(`PR #${number} wasn't found in ${repo}`);
+  const head = p.commits.nodes[0]?.commit;
+  const checks = (head?.statusCheckRollup?.contexts.nodes ?? []).map(prCheck)
+    .sort((a, b) => CHECK_ORDER[a.result] - CHECK_ORDER[b.result] || a.name.localeCompare(b.name));
+  const conversation = [
+    ...p.comments.nodes.map((c) => ({
+      id: c.id, kind: 'comment', author: c.author?.login ?? 'ghost', at: Date.parse(c.createdAt) || null, state: null, bodyHTML: tasks(c.bodyHTML), url: c.url,
+    })),
+    // Reviews that say something; bare approvals already show under Reviews.
+    ...p.reviews.nodes.filter((r) => r.bodyHTML?.trim()).map((r) => ({
+      id: r.id, kind: 'review', author: r.author?.login ?? 'ghost', at: Date.parse(r.submittedAt) || null, state: r.state, bodyHTML: tasks(r.bodyHTML), url: r.url,
+    })),
+  ].sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+  return {
+    number: p.number,
+    title: p.title,
+    url: p.url,
+    state: p.merged ? 'MERGED' : p.state,
+    draft: p.isDraft,
+    author: p.author?.login ?? null,
+    createdAt: Date.parse(p.createdAt) || null,
+    updatedAt: Date.parse(p.updatedAt) || null,
+    mergedAt: Date.parse(p.mergedAt) || null,
+    branch: p.headRefName,
+    base: p.baseRefName,
+    additions: p.additions,
+    deletions: p.deletions,
+    changedFiles: p.changedFiles,
+    commits: p.commits.totalCount,
+    head: head?.abbreviatedOid ?? null,
+    /** MERGEABLE, CONFLICTING or UNKNOWN (GitHub is still working it out). */
+    mergeable: p.mergeable,
+    /** CLEAN, BLOCKED, BEHIND, DIRTY, UNSTABLE, DRAFT, HAS_HOOKS or UNKNOWN. */
+    mergeState: p.mergeStateStatus,
+    review: p.reviewDecision || null,
+    reviews: p.latestOpinionatedReviews.nodes.map((r) => ({ author: r.author?.login ?? 'ghost', state: r.state, at: Date.parse(r.submittedAt) || null })),
+    requested: p.reviewRequests.nodes.map((r) => r.requestedReviewer?.login ?? r.requestedReviewer?.name).filter(Boolean),
+    labels: p.labels.nodes.map((l) => l.name),
+    assignees: p.assignees.nodes.map((a) => a.login),
+    closes: p.closingIssuesReferences.nodes.map((i) => ({ number: i.number, title: i.title, url: i.url })),
+    checks,
+    bodyHTML: tasks(p.bodyHTML),
+    conversation,
+    commentCount: p.comments.totalCount,
+    fetchedAt: Date.now(),
+  };
+}
+
 // ---------- GitHub Project board ----------
 
 const BOARD_QUERY = `query($o:String!,$n:Int!,$after:String){

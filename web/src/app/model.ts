@@ -132,6 +132,55 @@ export interface PullRequest {
   closes: number[];
 }
 
+/** One CI check on a PR's head commit (a GitHub Actions job, or a commit status from another service). */
+export interface PrCheck {
+  name: string;
+  /** The Actions workflow it belongs to, if any. */
+  workflow: string | null;
+  result: 'pass' | 'fail' | 'running' | 'skipped';
+  /** GitHub's own word for it: SUCCESS, FAILURE, IN_PROGRESS, QUEUED, PENDING… */
+  conclusion: string;
+  url: string | null;
+  description: string | null;
+  startedAt: number | null;
+  completedAt: number | null;
+}
+
+/** A PR in full, for the PR tab. */
+export interface PrDetail {
+  number: number;
+  title: string;
+  url: string;
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
+  draft: boolean;
+  author: string | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+  mergedAt: number | null;
+  branch: string;
+  base: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  commits: number;
+  head: string | null;
+  mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
+  mergeState: string;
+  review: string | null;
+  reviews: { author: string; state: string; at: number | null }[];
+  /** Reviewers asked who haven't answered yet. */
+  requested: string[];
+  labels: string[];
+  assignees: string[];
+  closes: { number: number; title: string; url: string }[];
+  checks: PrCheck[];
+  bodyHTML: string;
+  /** Comments and reviews with a body, oldest first. */
+  conversation: { id: string; kind: 'comment' | 'review'; author: string; at: number | null; state: string | null; bodyHTML: string; url: string }[];
+  commentCount: number;
+  fetchedAt: number;
+}
+
 /** An entry on a GitHub Project: its column, not the issue or PR behind it, says where it stands. */
 export interface BoardItem {
   id: string;

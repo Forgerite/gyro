@@ -57,3 +57,23 @@ html, body {
   font-family: 'Cascadia Code', 'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace;
   font-size: 12px;
 }
+
+/* GitHub's rendered markdown (board entries, PRs), in the dashboard's type and colours. */
+:is(app-entry-view, app-pr-tab) .md { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 13px; line-height: 1.5; color: var(--text); overflow-wrap: anywhere; }
+:is(app-entry-view, app-pr-tab) .md > :first-child { margin-top: 0; }
+:is(app-entry-view, app-pr-tab) .md > :last-child { margin-bottom: 0; }
+:is(app-entry-view, app-pr-tab) .md p, :is(app-entry-view, app-pr-tab) .md ul, :is(app-entry-view, app-pr-tab) .md ol, :is(app-entry-view, app-pr-tab) .md pre, :is(app-entry-view, app-pr-tab) .md blockquote, :is(app-entry-view, app-pr-tab) .md table { margin: 0 0 10px; }
+:is(app-entry-view, app-pr-tab) .md h1, :is(app-entry-view, app-pr-tab) .md h2, :is(app-entry-view, app-pr-tab) .md h3, :is(app-entry-view, app-pr-tab) .md h4 { margin: 14px 0 6px; font-size: 14px; line-height: 1.3; }
+:is(app-entry-view, app-pr-tab) .md h1 { font-size: 16px; }
+:is(app-entry-view, app-pr-tab) .md ul, :is(app-entry-view, app-pr-tab) .md ol { padding-left: 22px; }
+:is(app-entry-view, app-pr-tab) .md li + li { margin-top: 2px; }
+:is(app-entry-view, app-pr-tab) .md code { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12px; background: var(--panel-2); border-radius: 3px; padding: 1px 4px; }
+:is(app-entry-view, app-pr-tab) .md pre { background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 8px; overflow-x: auto; }
+:is(app-entry-view, app-pr-tab) .md pre code { background: none; padding: 0; }
+:is(app-entry-view, app-pr-tab) .md blockquote { border-left: 3px solid var(--border); padding-left: 10px; color: var(--text-2); margin-left: 0; }
+:is(app-entry-view, app-pr-tab) .md img { max-width: 100%; height: auto; }
+:is(app-entry-view, app-pr-tab) .md table { border-collapse: collapse; display: block; overflow-x: auto; }
+:is(app-entry-view, app-pr-tab) .md th, :is(app-entry-view, app-pr-tab) .md td { border: 1px solid var(--border); padding: 3px 7px; }
+:is(app-entry-view, app-pr-tab) .md hr { border: none; border-top: 1px solid var(--border); }
+:is(app-entry-view, app-pr-tab) .md input[type='checkbox'] { margin: 0 4px 0 0; vertical-align: middle; }
+:is(app-entry-view, app-pr-tab) .md .task-list-item { list-style: none; }

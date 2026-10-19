@@ -4,9 +4,9 @@ import { AgoPipe } from './ago.pipe';
 import { GitTab } from './git-tab';
 import { NgTemplateOutlet } from '@angular/common';
 import { ArchiveResult, TeardownCard } from './teardown-card';
-import { WtFlags } from './wt-flags';
+import { WtFlags, prSummary } from './wt-flags';
 import { RebaseStatus } from './rebase-status';
-import { PrLine } from './pr-line';
+import { PrTab } from './pr-tab';
 import { Session, Term, Workspace, Worktree, sessionState } from './model';
 
 export type OpenRequest = {
@@ -21,7 +21,7 @@ export type OpenRequest = {
  */
 @Component({
   selector: 'app-worktree-panel',
-  imports: [AgoPipe, GitTab, WtFlags, TeardownCard, NgTemplateOutlet, RebaseStatus, PrLine],
+  imports: [AgoPipe, GitTab, WtFlags, TeardownCard, NgTemplateOutlet, RebaseStatus, PrTab],
   template: `
     @let w = wt();
     <header>
@@ -51,7 +51,6 @@ export type OpenRequest = {
           </button>
         </span>
       </div>
-      <app-pr-line [wt]="w" [ws]="ws()" />
       <app-rebase-status [wt]="w" />
       @if (liveCount() > 1) {
         <div class="warn" role="status">{{ liveCount() }} sessions are live in this worktree. Consider closing all but one.</div>
@@ -61,12 +60,28 @@ export type OpenRequest = {
     <div class="tabs" role="tablist" aria-label="Worktree views">
       <button type="button" role="tab" [attr.aria-selected]="tab() === 'session'" (click)="api.setPanelTab('session')">Session</button>
       <button type="button" role="tab" [attr.aria-selected]="tab() === 'git'" (click)="api.setPanelTab('git')" title="Git (g)">
-        Git <app-wt-flags [git]="w.git" [pr]="w.pr" />
+        Git <app-wt-flags [git]="w.git" />
       </button>
+      @if (ws().github) {
+        <button type="button" role="tab" [attr.aria-selected]="tab() === 'pr'" (click)="api.setPanelTab('pr')"
+                [title]="w.pr ? prSummary(w.pr) + ' (p)' : 'Pull request (p)'">
+          PR
+          @if (w.pr; as p) {
+            <span class="pr-badge" [class.draft]="p.draft">#{{ p.number }}</span>
+            @switch (p.checks) {
+              @case ('fail') { <span class="ci fail" role="img" aria-label="checks failing">✕</span> }
+              @case ('pending') { <span class="ci pending" role="img" aria-label="checks running">●</span> }
+              @case ('pass') { <span class="ci pass" role="img" aria-label="checks passing">✓</span> }
+            }
+          }
+        </button>
+      }
     </div>
 
     @if (tab() === 'git') {
       <app-git-tab [wt]="w" [now]="now()" />
+    } @else if (tab() === 'pr') {
+      <app-pr-tab [wt]="w" [ws]="ws()" />
     } @else if (tearingDown()) {
       <app-teardown-card [wt]="w" (done)="archived($event)" (cancel)="setTearingDown(false)" />
     } @else {
@@ -226,7 +241,12 @@ export class WorktreePanel {
     () => this.wt().sessions.find((s) => s.id === this.viewingId()) ?? this.current(),
   );
   protected readonly api = inject(DashboardService);
-  protected readonly tab = this.api.panelTab;
+  /** The PR tab only exists for projects linked to GitHub; elsewhere it falls back to the session. */
+  protected readonly tab = computed(() => {
+    const t = this.api.panelTab();
+    return t === 'pr' && !this.ws().github ? 'session' : t;
+  });
+  protected readonly prSummary = prSummary;
   /** Requested but claude hasn't drawn yet. */
   protected readonly booting = computed(() => {
     const st = this.api.starting()[this.wt().path];

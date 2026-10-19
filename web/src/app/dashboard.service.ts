@@ -31,11 +31,12 @@ export function workingEntries(files: ChangedFile[]): { file: string; view: Diff
   ];
 }
 
-export type PanelTab = 'session' | 'git';
+export type PanelTab = 'session' | 'git' | 'pr';
 
 function loadPanelTab(): PanelTab {
   try {
-    return localStorage.getItem(PANEL_TAB_KEY) === 'git' ? 'git' : 'session';
+    const t = localStorage.getItem(PANEL_TAB_KEY);
+    return t === 'git' || t === 'pr' ? t : 'session';
   } catch {
     return 'session';
   }
