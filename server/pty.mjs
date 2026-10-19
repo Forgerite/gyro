@@ -61,9 +61,15 @@ function spawnTerm(file, args, cwd, extra, env = {}) {
   return term;
 }
 
+/** A message fit to hand claude, as one argument or one paste: no stray control characters. */
+function cleanPrompt(prompt) {
+  return prompt?.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]+/g, ' ').trim() || null;
+}
+
 /**
- * Start claude in `path`, resuming `sessionId` or starting a new session with a known id. The
- * project's dev server (`devCmd`, if it has one) starts alongside.
+ * Start claude in `path`, resuming `sessionId` or starting a new session with a known id, optionally
+ * opening on `prompt` as the first message. The project's dev server (`devCmd`, if it has one)
+ * starts alongside.
  */
 export function startTerm(path, sessionId, devCmd = null, prompt = null) {
   const existing = findTerm(path);
@@ -71,15 +77,30 @@ export function startTerm(path, sessionId, devCmd = null, prompt = null) {
     throw Object.assign(new Error('A terminal is already running in this worktree'), { status: 409 });
   }
   const id = sessionId ?? randomUUID();
-  // A new session can open on a first message (e.g. the issue it's for). claude.exe gets it as one
+  // A session can open on a first message (e.g. the issue it's for). claude.exe gets it as one
   // argument (node-pty quotes it), so line breaks and quotes survive; other control characters don't.
-  const first = prompt?.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]+/g, ' ').trim();
-  const args = sessionId ? ['--resume', sessionId] : ['--session-id', id, ...(first ? [first] : [])];
+  const first = cleanPrompt(prompt);
+  const args = [...(sessionId ? ['--resume', sessionId] : ['--session-id', id]), ...(first ? [first] : [])];
   // The worktree's port block: whatever claude starts (tests, a second stack) inherits it.
   const term = spawnTerm(CLAUDE, args, path, { path, sessionId: id, resumed: !!sessionId, devCommand: devCmd }, portEnv(path));
   terms.set(norm(path), term);
   const dev = devs.get(norm(path));
   if (devCmd && (!dev || dev.exited)) startDev(path, devCmd);
+  return term;
+}
+
+/**
+ * Type `prompt` into the running claude in `path` and submit it, as if pasted at its prompt; claude
+ * queues it if it's mid-turn. Bracketed paste keeps line breaks from submitting early.
+ */
+export function sendPrompt(path, prompt) {
+  const term = findTerm(path);
+  if (!term || term.exited) throw Object.assign(new Error('No session is running in this worktree'), { status: 409 });
+  const text = cleanPrompt(prompt);
+  if (!text) throw Object.assign(new Error('Nothing to send'), { status: 400 });
+  term.proc.write(`\x1b[200~${text}\x1b[201~`);
+  // Enter on its own, once the paste has landed, so it submits instead of joining the paste.
+  setTimeout(() => { if (!term.exited) term.proc.write('\r'); }, 150);
   return term;
 }
 

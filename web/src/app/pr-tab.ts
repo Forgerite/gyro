@@ -96,6 +96,33 @@ export class PrTab {
     }
   });
 
+  /** Claude running in this worktree's dock terminal. */
+  private readonly running = computed(() =>
+    !!this.api.snapshot()?.terms.some((t) => t.path === this.wt().path && !t.exited),
+  );
+  /** "Fix in session": offered while an open PR has a failing check. Null when there's nothing to fix. */
+  protected readonly fix = computed(() => {
+    const p = this.pr();
+    if (!p || p.state !== 'OPEN' || !this.tally().fail) return null;
+    const top = this.wt().sessions[0];
+    if (!this.running() && top?.live) {
+      const where = top.live.entrypoint === 'claude-desktop' ? 'Claude Desktop' : 'another terminal';
+      return { blocked: true, title: `The session is open in ${where}; tell it there, or close it first` };
+    }
+    const what = 'look up the failed jobs, fix them and push to update the PR';
+    const title = this.running() ? `Tell the running session to ${what}`
+      : top ? `Resume the latest session and have it ${what}`
+      : `Start a session to ${what}`;
+    return { blocked: false, title, resume: !!top };
+  });
+  protected readonly fixing = computed(() => !!this.api.fixing()[this.wt().path]);
+
+  protected fixInSession(): void {
+    const n = this.number();
+    const f = this.fix();
+    if (n && f && !f.blocked) this.api.fixPr(this.wt().path, n, !!f.resume);
+  }
+
   protected readonly reviewWord = computed(() => reviewText(this.pr()?.review ?? null));
 
   constructor() {

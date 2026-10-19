@@ -158,6 +158,37 @@ export class DashboardService {
     });
   }
 
+  /** "Fix in session" asks in flight, by worktree path. */
+  readonly fixing = signal<Record<string, true>>({});
+
+  /**
+   * Hand PR `number`'s failing checks to the worktree's Claude: typed into its running dock session,
+   * else its latest session is resumed (or a new one started) on it. Then show that terminal.
+   */
+  fixPr(path: string, number: number, resume: boolean): void {
+    if (this.fixing()[path]) return;
+    const running = this.snapshot()?.terms.some((t) => t.path === path && !t.exited);
+    // No session up yet: show the boot placeholder while claude starts, as startTerm does.
+    const placed = !running && !this.starting()[path];
+    if (placed) this.starting.update((m) => ({ ...m, [path]: { at: Date.now(), resume } }));
+    this.fixing.update((m) => ({ ...m, [path]: true }));
+    this.showTerm(path);
+    const done = () => this.fixing.update(({ [path]: _, ...rest }) => rest);
+    this.http.post<{ terms: Term[]; how: 'sent' | 'resumed' | 'started' }>('/api/terms', { action: 'fix-pr', path, number }).subscribe({
+      next: ({ terms, how }) => {
+        done();
+        if (placed && how === 'sent') this.doneStarting(path);
+        this.setTerms(terms);
+        this.showTerm(path);
+      },
+      error: (e) => {
+        done();
+        if (placed) this.doneStarting(path);
+        this.error.set(e.error?.error ?? e.message);
+      },
+    });
+  }
+
   /** Convert a project to Gyro: ccdb's steps run now, then a Claude session starts in a worktree made for it. */
   convertToGyro(path: string): Observable<{ worktree: string }> {
     return this.http.post<{ worktree: string; terms: Term[] }>('/api/gyro/convert', { path }).pipe(

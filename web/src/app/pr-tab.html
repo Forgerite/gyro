@@ -40,6 +40,11 @@
           {{ checkSummary() }}
         </span>
         <span class="spacer"></span>
+        @if (fix(); as f) {
+          <button type="button" class="fix" (click)="fixInSession()" [disabled]="f.blocked || fixing()" [title]="f.title">
+            {{ fixing() ? 'Sending…' : 'Fix in session' }}
+          </button>
+        }
         @if (p.head) { <span class="muted" title="Head commit">{{ p.head }}</span> }
         <button type="button" class="link" (click)="refresh()" [disabled]="loading()" title="Re-read the PR from GitHub">
           {{ loading() ? 'Refreshing…' : 'Refresh' }}

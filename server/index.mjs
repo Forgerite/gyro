@@ -13,7 +13,7 @@ import { findReports, serveReport } from './reports.mjs';
 import { leasePorts, loadExcludedPorts, portsOf, releasePorts } from './ports.mjs';
 import { allGyro, finishGyro, gyroBrief, gyroOf, noteGyro, recordGyro, reportStep, startGyro } from './gyro.mjs';
 import { worktreeHome } from './worktrees.mjs';
-import { attachPtySocket, closeTerm, detectDev, findTerm, killAllTerms, listTerms, startDev, startTerm, stopDev } from './pty.mjs';
+import { attachPtySocket, closeTerm, detectDev, findTerm, killAllTerms, listTerms, sendPrompt, startDev, startTerm, stopDev } from './pty.mjs';
 import { resolvePorts } from '../scripts/worktree-ports.mjs';
 
 const ports = await resolvePorts();
@@ -428,7 +428,40 @@ function devFor(target) {
   return set !== undefined ? set || null : detectDev(target.path);
 }
 
-async function termAction({ action, path, sessionId, prompt, entry }) {
+/** What a session is told when its PR's checks fail. One paragraph, so it reads as typed, not pasted. */
+function fixPrompt(pr) {
+  const failing = pr.checks.filter((c) => c.result === 'fail').map((c) => (c.workflow ? `${c.workflow} / ${c.name}` : c.name));
+  return [
+    `CI failed on PR #${pr.number} (${pr.url}): ${failing.join(', ')} ${failing.length === 1 ? 'is' : 'are'} failing.`,
+    `Look up the failed jobs (\`gh pr checks ${pr.number}\`, then \`gh run view <run-id> --log-failed\` for each failed run) and work out why they failed.`,
+    'Fix the causes, check the fix locally where you can, then commit and push to this branch to update the PR, and confirm the checks run again.',
+  ].join(' ');
+}
+
+/**
+ * "Fix in session": hand the PR's failing checks to the worktree's Claude. A running dock session gets
+ * the message typed in; otherwise its latest session is resumed (or a new one started) opening on it.
+ */
+async function fixPr(wt, number) {
+  if (!Number.isInteger(number) || number < 1) throw httpError(400, 'bad PR number');
+  const github = getGithub(wt.repo ?? wt.path);
+  if (!github) throw httpError(400, 'This project is not linked to GitHub');
+  const pr = await prDetail(github.repo, number).catch((e) => { throw httpError(502, e.message); });
+  if (pr.state !== 'OPEN') throw httpError(409, `PR #${number} is ${pr.state.toLowerCase()}`);
+  if (!pr.checks.some((c) => c.result === 'fail')) throw httpError(409, `No checks are failing on PR #${number}`);
+  const prompt = fixPrompt(pr);
+  if (findTermSession(wt.path)) return sendPrompt(wt.path, prompt), { terms: listTerms(), how: 'sent' };
+  const top = wt.sessions?.[0];
+  // Open elsewhere (e.g. Claude Desktop): resuming it here would fork it.
+  if (top?.live) {
+    const where = top.live.entrypoint === 'claude-desktop' ? 'Claude Desktop' : 'another terminal';
+    throw httpError(409, `This worktree's session is open in ${where}; tell it there, or close it first`);
+  }
+  startTerm(wt.path, top?.id, devFor(wt), prompt);
+  return { terms: listTerms(), how: top ? 'resumed' : 'started' };
+}
+
+async function termAction({ action, path, sessionId, prompt, entry, number }) {
   // Closing only needs a running terminal; its worktree may have been removed out from under it.
   if (action === 'close' && path && findTerm(path)) return closeTerm(findTerm(path).path), { terms: listTerms() };
   const wt = await knownTarget(path);
@@ -446,6 +479,7 @@ async function termAction({ action, path, sessionId, prompt, entry }) {
   }
   if (action === 'start') return startTerm(wt.path, sessionId, devFor(wt), prompt), { terms: listTerms() };
   if (action === 'close') return closeTerm(wt.path), { terms: listTerms() };
+  if (action === 'fix-pr') return fixPr(wt, number);
   // The dev server beside a dock session: restart it after it stops, or stop it.
   if (action === 'dev-start' && findTerm(wt.path)) return startDev(wt.path, devFor(wt)), { terms: listTerms() };
   if (action === 'dev-stop') return stopDev(wt.path), { terms: listTerms() };
