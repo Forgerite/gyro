@@ -136,10 +136,11 @@ const OUTPUT_FILE = /written to: (.+?\.output)\b/;
 
 /**
  * Background work a session started and hasn't heard back from: shells run in the background,
- * async subagents and workflows. Claude marks a session idle when its turn ends, even while these run.
+ * monitors, async subagents and workflows. Claude marks a session idle when its turn ends, even while these run.
  */
 function trackBackground(r, s) {
   // Finished: the notification is queued (and later delivered as a user message) with the launch's tool-use id.
+  // A monitor's per-event notifications carry only its task id, so they don't end it here.
   const note = r.type === 'queue-operation' ? r.content
     : r.type === 'user' && typeof r.message?.content === 'string' ? r.message.content : null;
   if (typeof note === 'string' && note.includes('<task-notification>')) {
@@ -148,12 +149,26 @@ function trackBackground(r, s) {
   }
   const res = r.toolUseResult;
   if (r.type !== 'user' || !res || typeof res !== 'object' || !Array.isArray(r.message?.content)) return;
-  const kind = res.backgroundTaskId ? 'shell' : res.isAsync ? 'agent' : res.taskId && res.status ? 'workflow' : null;
+  // TaskStop: the stopped task is over even if its own notice never lands in the log.
+  if (res.task_id && typeof res.message === 'string' && res.message.startsWith('Successfully stopped')) {
+    for (const [id, t] of s.background ?? []) if (t.taskId === res.task_id) s.background.delete(id);
+    return;
+  }
+  const kind = res.backgroundTaskId ? 'shell' : res.isAsync ? 'agent'
+    : res.taskId && 'timeoutMs' in res ? 'monitor' : res.taskId && res.status ? 'workflow' : null;
   const id = kind && r.message.content.find((c) => c.type === 'tool_result')?.tool_use_id;
   if (!id) return;
   const text = textOf(r.message.content.find((c) => c.type === 'tool_result').content);
+  const at = Date.parse(r.timestamp) || 0;
   s.background ??= new Map();
-  s.background.set(id, { kind, at: Date.parse(r.timestamp) || 0, output: res.outputFile ?? text.match(OUTPUT_FILE)?.[1] ?? null });
+  s.background.set(id, {
+    kind, at,
+    taskId: res.backgroundTaskId ?? res.taskId ?? null,
+    // A monitor is killed at its timeout; a persistent one lasts until the session ends.
+    expiresAt: kind === 'monitor' && !res.persistent && res.timeoutMs ? at + res.timeoutMs : null,
+    persistent: kind === 'monitor' && !!res.persistent,
+    output: res.outputFile ?? text.match(OUTPUT_FILE)?.[1] ?? null,
+  });
 }
 
 function summarize(records, s) {
@@ -342,6 +357,8 @@ function worktreeHome(workspaces, cwd) {
 const QUIET_SHELL_MS = 10 * 60_000;
 /** Subagents and workflows always report back; past this, assume the notification was lost. */
 const STALE_TASK_MS = 12 * 3600_000;
+/** Slack past a monitor's timeout before assuming its expiry notice was lost. */
+const MONITOR_GRACE_MS = 60_000;
 
 /** Background tasks of this live session still running: launched by this process, not yet reported back. */
 function runningBackground(s, live) {
@@ -349,7 +366,8 @@ function runningBackground(s, live) {
   let n = 0;
   for (const t of s.background ?? []) {
     if (live.startedAt && t.at < live.startedAt) continue;
-    if (now - t.at > STALE_TASK_MS) continue;
+    if (t.expiresAt && now > t.expiresAt + MONITOR_GRACE_MS) continue;
+    if (!t.persistent && now - t.at > STALE_TASK_MS) continue;
     if (t.kind === 'shell' && now - t.at > QUIET_SHELL_MS) {
       let written = 0;
       try { written = statSync(t.output).mtimeMs; } catch { /* no output file: gone */ }
@@ -397,7 +415,7 @@ async function snapshot() {
     ws.loose = list.slice(0, LOOSE_LIMIT);
     orphaned.set(norm(ws.path), list.filter((x) => !x.folderExists && !x.live).map((x) => x.id));
   }
-  const rank = (s) => (s.live?.status === 'busy' || s.live?.background ? 2 : s.live ? 1 : 0);
+  const rank = (s) => (s.live?.status === 'busy' || s.live?.status === 'shell' || s.live?.background ? 2 : s.live ? 1 : 0);
   const hot = new Set();
   for (const [key, wt] of byPath) {
     wt.sessions.sort((a, b) => rank(b) - rank(a) || b.lastActivity - a.lastActivity);

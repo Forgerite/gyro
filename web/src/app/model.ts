@@ -193,8 +193,13 @@ export type State = 'busy' | 'waiting' | 'none';
 
 export function sessionState(s: Session | undefined): State {
   if (!s) return 'none';
-  // Claude goes idle when its turn ends, but a background shell or subagent it's waiting on is still work.
-  return s.live?.status === 'busy' || s.live?.background ? 'busy' : 'waiting';
+  // Claude goes idle when its turn ends, but a background shell, monitor or subagent it's waiting on is still work.
+  return isWorking(s.live?.status) || s.live?.background ? 'busy' : 'waiting';
+}
+
+/** Claude Code's own live statuses: 'shell' (running a shell) counts as working, like 'busy'. */
+export function isWorking(status: string | undefined): boolean {
+  return status === 'busy' || status === 'shell';
 }
 
 /**

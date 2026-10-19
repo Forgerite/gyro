@@ -380,7 +380,7 @@ function retireWhenIdle(repo, worktree, sessionId) {
       const wt = snap.workspaces.flatMap((w) => w.worktrees).find((w) => norm(w.path) === norm(worktree));
       if (!wt) return;
       const s = wt.sessions.find((x) => x.id === sessionId);
-      if (s?.live && (s.live.status === 'busy' || s.live.background) && Date.now() < until) return void setTimeout(tick, 5000);
+      if (s?.live && (s.live.status === 'busy' || s.live.status === 'shell' || s.live.background) && Date.now() < until) return void setTimeout(tick, 5000);
       await archiveWorktree(worktree, false);
       noteGyro(repo, 'Nothing needed changing, so Gyro removed the gyro worktree and branch.');
     } catch (e) {
