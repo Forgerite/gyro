@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "serve": "node scripts/dev.mjs --no-watch",
     "api": "node --watch-path=server server/index.mjs",
+    "api:serve": "node server/index.mjs",
     "postinstall": "npm install --prefix web"
   },
   "devDependencies": {

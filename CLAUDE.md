@@ -1,6 +1,8 @@
 # ccdb
 
-`npm run dev` runs the API (`server/`) and the Angular dashboard (`web/`) together.
+`npm run dev` runs the API (`server/`) and the Angular dashboard (`web/`) together, restarting the API whenever a file under `server/` changes.
+
+`npm run serve` is the same without that restart. Use it for the dashboard you work in: the embedded terminals live inside the API process, so every restart kills all running sessions.
 
 ## Ports
 
