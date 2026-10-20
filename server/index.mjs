@@ -13,7 +13,7 @@ import { findReports, serveReport } from './reports.mjs';
 import { leasePorts, loadExcludedPorts, portsOf, releasePorts } from './ports.mjs';
 import { allGyro, finishGyro, gyroBrief, gyroOf, noteGyro, recordGyro, reportStep, startGyro } from './gyro.mjs';
 import { worktreeHome } from './worktrees.mjs';
-import { attachPtySocket, closeTerm, detectDev, findTerm, killAllTerms, listTerms, sendPrompt, startDev, startTerm, stopDev } from './pty.mjs';
+import { attachPtySocket, closeShell, closeTerm, detectDev, findTerm, killAllTerms, listTerms, sendPrompt, startDev, startShell, startTerm, stopDev } from './pty.mjs';
 import { resolvePorts } from '../scripts/worktree-ports.mjs';
 
 const ports = await resolvePorts();
@@ -461,7 +461,7 @@ async function fixPr(wt, number) {
   return { terms: listTerms(), how: top ? 'resumed' : 'started' };
 }
 
-async function termAction({ action, path, sessionId, prompt, entry, number }) {
+async function termAction({ action, path, sessionId, prompt, entry, number, id }) {
   // Closing only needs a running terminal; its worktree may have been removed out from under it.
   if (action === 'close' && path && findTerm(path)) return closeTerm(findTerm(path).path), { terms: listTerms() };
   const wt = await knownTarget(path);
@@ -483,6 +483,9 @@ async function termAction({ action, path, sessionId, prompt, entry, number }) {
   // The dev server beside a dock session: restart it after it stops, or stop it.
   if (action === 'dev-start' && findTerm(wt.path)) return startDev(wt.path, devFor(wt)), { terms: listTerms() };
   if (action === 'dev-stop') return stopDev(wt.path), { terms: listTerms() };
+  // Extra shells (Git Bash) beside a dock session.
+  if (action === 'shell-start' && findTerm(wt.path)) return startShell(wt.path), { terms: listTerms() };
+  if (action === 'shell-close' && typeof id === 'string') return closeShell(wt.path, id), { terms: listTerms() };
   throw Object.assign(new Error('unknown action'), { status: 400 });
 }
 

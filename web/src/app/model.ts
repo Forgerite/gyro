@@ -285,6 +285,17 @@ export interface Term {
   /** The project's dev script (`npm run dev`), run beside claude; null when it has none. */
   devCommand: string | null;
   dev: DevServer | null;
+  /** Shells (Git Bash on Windows) the user opened beside claude. */
+  shells?: Shell[];
+}
+
+/** An extra interactive shell in a dock session. */
+export interface Shell {
+  id: string;
+  label: string;
+  startedAt: number;
+  exited: boolean;
+  exitCode: number | null;
 }
 
 /** The dev server running beside a dock session, and the local URL it printed once it was up. */

@@ -372,6 +372,26 @@ export class DashboardService {
     });
   }
 
+  /** Open another shell beside a dock session; `done` gets its id. */
+  openShell(path: string, done: (id: string) => void): void {
+    const before = new Set(this.snapshot()?.terms.find((t) => t.path === path)?.shells?.map((s) => s.id));
+    this.http.post<{ terms: Term[] }>('/api/terms', { action: 'shell-start', path }).subscribe({
+      next: ({ terms }) => {
+        this.setTerms(terms);
+        const added = terms.find((t) => t.path === path)?.shells?.find((s) => !before.has(s.id));
+        if (added) done(added.id);
+      },
+      error: (e) => this.error.set(e.error?.error ?? e.message),
+    });
+  }
+
+  closeShell(path: string, id: string): void {
+    this.http.post<{ terms: Term[] }>('/api/terms', { action: 'shell-close', path, id }).subscribe({
+      next: ({ terms }) => this.setTerms(terms),
+      error: (e) => this.error.set(e.error?.error ?? e.message),
+    });
+  }
+
   private setTerms(terms: Term[]): void {
     this.termsVersion++;
     this.snapshot.update((s) => (s ? { ...s, terms } : s));

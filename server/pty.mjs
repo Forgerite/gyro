@@ -1,9 +1,9 @@
-// Embedded terminals: per worktree, one claude PTY plus (when the project has one) its dev server,
-// surviving browser reconnects.
-import { execFile } from 'node:child_process';
+// Embedded terminals: per worktree, one claude PTY plus (when the project has one) its dev server
+// and any shells the user opens, surviving browser reconnects.
+import { execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import pty from 'node-pty';
 import { WebSocketServer } from 'ws';
 import { CLAUDE, childEnv } from './claude-env.mjs';
@@ -20,6 +20,8 @@ const SELF = norm(resolve(import.meta.dirname, '..'));
 const terms = new Map();
 /** norm(path) -> dev server Term */
 const devs = new Map();
+/** norm(path) -> { next: number, list: shell Term[] } */
+const shells = new Map();
 
 /**
  * node-pty 1.1.0's Windows kill() crashes the process (getConsoleProcessList returns undefined),
@@ -36,6 +38,7 @@ export function listTerms() {
     return {
       path, sessionId, resumed, pid, startedAt, exited, exitCode, attached: clients.size, devCommand,
       dev: d ? { startedAt: d.startedAt, exited: d.exited, exitCode: d.exitCode, url: d.url } : null,
+      shells: (shells.get(norm(path))?.list ?? []).map(({ id, label, startedAt, exited, exitCode }) => ({ id, label, startedAt, exited, exitCode })),
     };
   });
 }
@@ -160,7 +163,47 @@ export function stopDev(path) {
   if (d && !d.exited) killTree(d);
 }
 
-/** Kill (if running) and forget the terminals for `path`: claude and its dev server. */
+let bashPath;
+/** Git Bash on Windows (found through git itself, so any install location works); bash elsewhere. */
+function findBash() {
+  if (bashPath !== undefined) return bashPath;
+  if (process.platform !== 'win32') return (bashPath = process.env.SHELL || 'bash');
+  const candidates = [];
+  try {
+    // e.g. C:/Program Files/Git/mingw64/libexec/git-core -> C:/Program Files/Git/bin/bash.exe
+    const exec = execFileSync('git', ['--exec-path'], { encoding: 'utf8', windowsHide: true }).trim();
+    candidates.push(join(dirname(dirname(dirname(exec))), 'bin', 'bash.exe'));
+  } catch { /* git not on PATH */ }
+  for (const base of [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Programs')]) {
+    if (base) candidates.push(join(base, 'Git', 'bin', 'bash.exe'));
+  }
+  return (bashPath = candidates.find((c) => existsSync(c)) ?? null);
+}
+
+/** Open another interactive shell (Git Bash on Windows) in `path`, beside its claude. */
+export function startShell(path) {
+  const bash = findBash();
+  if (!bash) throw Object.assign(new Error('Git Bash was not found; install Git for Windows'), { status: 400 });
+  let group = shells.get(norm(path));
+  if (!group) shells.set(norm(path), (group = { next: 1, list: [] }));
+  const n = group.next++;
+  // CHERE_INVOKING keeps Git Bash's login profile from cd-ing to $HOME.
+  const term = spawnTerm(bash, ['--login', '-i'], path, { id: randomUUID(), label: `bash ${n}`, path }, { ...portEnv(path), CHERE_INVOKING: '1' });
+  group.list.push(term);
+  return term;
+}
+
+/** Kill (if running) and forget one shell. */
+export function closeShell(path, id) {
+  const group = shells.get(norm(path));
+  const term = group?.list.find((t) => t.id === id);
+  if (!term) return;
+  if (!term.exited) killTree(term);
+  for (const ws of term.clients) ws.close();
+  group.list = group.list.filter((t) => t !== term);
+}
+
+/** Kill (if running) and forget the terminals for `path`: claude, its dev server and its shells. */
 export function closeTerm(path) {
   for (const map of [terms, devs]) {
     const term = map.get(norm(path));
@@ -169,6 +212,8 @@ export function closeTerm(path) {
     for (const ws of term.clients) ws.close();
     map.delete(norm(path));
   }
+  for (const term of shells.get(norm(path))?.list ?? []) closeShell(path, term.id);
+  shells.delete(norm(path));
 }
 
 function broadcast(term, msg) {
@@ -176,15 +221,18 @@ function broadcast(term, msg) {
   for (const ws of term.clients) if (ws.readyState === ws.OPEN) ws.send(data);
 }
 
-/** WebSocket endpoint: /api/pty?path=<worktree>[&kind=dev]. Attach only; terminals are created over HTTP. */
+/** WebSocket endpoint: /api/pty?path=<worktree>[&kind=dev|&kind=shell&id=<id>]. Attach only; terminals are created over HTTP. */
 export function attachPtySocket(server, originOk) {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname !== '/api/pty' || !originOk(req)) return socket.destroy();
-    const map = url.searchParams.get('kind') === 'dev' ? devs : terms;
-    const term = map.get(norm(url.searchParams.get('path') ?? ''));
+    const key = norm(url.searchParams.get('path') ?? '');
+    const kind = url.searchParams.get('kind');
+    const term = kind === 'shell'
+      ? shells.get(key)?.list.find((t) => t.id === url.searchParams.get('id'))
+      : (kind === 'dev' ? devs : terms).get(key);
     if (!term) return socket.destroy();
     wss.handleUpgrade(req, socket, head, (ws) => {
       term.clients.add(ws);
@@ -204,5 +252,6 @@ export function attachPtySocket(server, originOk) {
 }
 
 export function killAllTerms() {
-  for (const t of [...terms.values(), ...devs.values()]) if (!t.exited) killTree(t);
+  const all = [...terms.values(), ...devs.values(), ...[...shells.values()].flatMap((g) => g.list)];
+  for (const t of all) if (!t.exited) killTree(t);
 }

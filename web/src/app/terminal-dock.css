@@ -111,6 +111,12 @@ kbd {
 .panes button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .panes .sub { color: var(--muted); margin-left: 4px; }
 .panes .act { color: var(--muted); }
+.panes .shell { display: flex; align-items: stretch; }
+.panes .shell button[role='tab'] { padding-right: 2px; }
+.panes .shell .x { padding: 3px 8px 3px 4px; }
+.panes .shell .x:hover { color: var(--danger); }
+.panes .shell.exited button[role='tab'] { text-decoration: line-through; }
+.panes .add { padding: 3px 10px; font-size: 13px; line-height: 1; }
 .dot.up { background: currentColor; }
 .dot.busy { background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
 

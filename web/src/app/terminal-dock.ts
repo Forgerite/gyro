@@ -49,18 +49,29 @@ const clampSplit = (f: number) => Math.min(0.8, Math.max(0.2, f));
       }
       <div class="split" [class.solo]="!previewShown()" [style.--left]="split() * 100 + '%'" [hidden]="!tabs().length">
         <div class="group">
-          @if (current()?.devCommand; as cmd) {
+          @if (current()?.live) {
             <div class="panes" role="tablist" aria-label="Session terminals">
               <button type="button" role="tab" [attr.aria-selected]="pane() === 'claude'" (click)="showPane('claude')">Claude</button>
-              <button type="button" role="tab" [attr.aria-selected]="pane() === 'dev'" (click)="showPane('dev')">
-                <span class="dot" [class]="'dot ' + devState()" aria-hidden="true"></span>{{ cmd }}
-                <span class="sub">{{ devText() }}</span>
-              </button>
+              @if (current()!.devCommand; as cmd) {
+                <button type="button" role="tab" [attr.aria-selected]="pane() === 'dev'" (click)="showPane('dev')">
+                  <span class="dot" [class]="'dot ' + devState()" aria-hidden="true"></span>{{ cmd }}
+                  <span class="sub">{{ devText() }}</span>
+                </button>
+              }
+              @for (s of current()!.shells; track s.id) {
+                <span class="shell" [class.exited]="s.exited">
+                  <button type="button" role="tab" [attr.aria-selected]="pane() === 'shell:' + s.id" (click)="showPane('shell:' + s.id)">{{ s.label }}</button>
+                  <button type="button" class="x" [attr.aria-label]="'Close ' + s.label" title="Kill and close" (click)="api.closeShell(current()!.path, s.id)">×</button>
+                </span>
+              }
+              <button type="button" class="add" aria-label="New Git Bash terminal" title="New Git Bash terminal" (click)="openShell()">+</button>
               <span class="spacer"></span>
-              @if (current()!.dev && !current()!.dev!.exited) {
-                <button type="button" class="act" (click)="api.devServer(current()!.path, false)">Stop</button>
-              } @else {
-                <button type="button" class="act" (click)="api.devServer(current()!.path, true)">{{ current()!.dev ? 'Restart' : 'Start' }}</button>
+              @if (current()!.devCommand) {
+                @if (current()!.dev && !current()!.dev!.exited) {
+                  <button type="button" class="act" (click)="api.devServer(current()!.path, false)">Stop</button>
+                } @else {
+                  <button type="button" class="act" (click)="api.devServer(current()!.path, true)">{{ current()!.dev ? 'Restart' : 'Start' }}</button>
+                }
               }
             </div>
           }
@@ -82,6 +93,16 @@ const clampSplit = (f: number) => Math.min(0.8, Math.max(0.2, f));
                   [active]="t.path === active() && pane() === 'dev'"
                   [focusTick]="api.focusTerm()"
                   [hidden]="t.path !== active() || pane() !== 'dev'"
+                />
+              }
+              @for (s of t.shells; track s.id) {
+                <app-terminal-view
+                  kind="shell"
+                  [shellId]="s.id"
+                  [path]="t.path"
+                  [active]="t.path === active() && pane() === 'shell:' + s.id"
+                  [focusTick]="api.focusTerm()"
+                  [hidden]="t.path !== active() || pane() !== 'shell:' + s.id"
                 />
               }
             }
@@ -158,10 +179,10 @@ export class TerminalDock {
     const tabs = terms.map((t) => ({
       path: t.path, exited: t.exited, live: true, label: names.get(t.path) ?? t.path,
       state: t.exited ? 'none' : (states.get(t.path) ?? 'waiting'),
-      devCommand: t.devCommand ?? null, dev: t.dev ?? null,
+      devCommand: t.devCommand ?? null, dev: t.dev ?? null, shells: t.shells ?? [],
     }));
     for (const path of Object.keys(this.api.starting())) {
-      if (!terms.some((t) => t.path === path)) tabs.push({ path, exited: false, live: false, label: names.get(path) ?? path, state: 'busy', devCommand: null, dev: null });
+      if (!terms.some((t) => t.path === path)) tabs.push({ path, exited: false, live: false, label: names.get(path) ?? path, state: 'busy', devCommand: null, dev: null, shells: [] });
     }
     return tabs;
   });
@@ -175,9 +196,18 @@ export class TerminalDock {
 
   protected readonly current = computed(() => this.tabs().find((t) => t.path === this.active()) ?? null);
 
-  /** Left pane: claude, or the dev server's output. Only sessions with a dev server have the choice. */
-  private readonly chosenPane = signal<'claude' | 'dev'>('claude');
-  protected readonly pane = computed(() => (this.current()?.dev ? this.chosenPane() : 'claude'));
+  /**
+   * Left pane per dock tab: 'claude', 'dev' (the dev server's output) or 'shell:<id>'. Falls back to
+   * claude when the chosen one is gone.
+   */
+  private readonly chosenPane = signal<Record<string, string>>({});
+  protected readonly pane = computed(() => {
+    const cur = this.current();
+    const want = cur ? this.chosenPane()[cur.path] : undefined;
+    if (want === 'dev' && cur?.dev) return want;
+    if (want?.startsWith('shell:') && cur?.shells.some((s) => 'shell:' + s.id === want)) return want;
+    return 'claude';
+  });
   protected readonly devState = computed(() => {
     const d = this.current()?.dev;
     return !d || d.exited ? 'none' : d.url ? 'up' : 'busy';
@@ -189,9 +219,21 @@ export class TerminalDock {
     return d.url ? d.url.replace(/^https?:\/\/[^:/]+/, '').replace(/\/$/, '') || 'up' : 'starting…';
   });
 
-  protected showPane(p: 'claude' | 'dev'): void {
-    this.chosenPane.set(p);
+  protected showPane(p: string): void {
+    const path = this.active();
+    if (!path) return;
+    this.chosenPane.update((m) => ({ ...m, [path]: p }));
     this.api.focusTerm.update((n) => n + 1);
+  }
+
+  /** Open another Git Bash in the active session's worktree and switch to it. */
+  protected openShell(): void {
+    const path = this.active();
+    if (!path) return;
+    this.api.openShell(path, (id) => {
+      this.chosenPane.update((m) => ({ ...m, [path]: 'shell:' + id }));
+      this.api.focusTerm.update((n) => n + 1);
+    });
   }
 
   /** The preview (the app, or its test report) takes the right part of the dock. */
