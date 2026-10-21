@@ -107,9 +107,12 @@ export class RecordingPlayer {
   protected readonly speeds = SPEEDS;
   protected readonly fmt = formatMs;
 
+  /** The parent re-polls the list, handing over a fresh object for the same recording; only a new id is a new recording. */
+  private readonly id = computed(() => this.recording().id);
+
   protected readonly idx = httpResource<RecordingIndex>(() => ({
     url: '/api/recordings/index',
-    params: { path: this.path(), id: this.recording().id },
+    params: { path: this.path(), id: this.id() },
   }));
   private readonly streams = computed(() => (this.idx.hasValue() ? this.idx.value().streams : []));
   protected readonly length = computed(() => (this.idx.hasValue() ? this.idx.value().ms : 0));
@@ -154,7 +157,7 @@ export class RecordingPlayer {
   constructor() {
     // A new recording starts from the top, playing.
     effect(() => {
-      this.recording();
+      this.id();
       untracked(() => {
         this.pos.set(0);
         this.playing.set(false);
@@ -220,7 +223,7 @@ export class RecordingPlayer {
   }
 
   private frameUrl([, o, n]: [number, number, number]): string {
-    const q = new URLSearchParams({ path: this.path(), id: this.recording().id, o: String(o), n: String(n) });
+    const q = new URLSearchParams({ path: this.path(), id: this.id(), o: String(o), n: String(n) });
     return `/api/recordings/frame?${q}`;
   }
 }
