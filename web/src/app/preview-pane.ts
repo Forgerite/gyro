@@ -1,8 +1,9 @@
-import { Component, ElementRef, computed, inject, input, output, signal, viewChildren } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, effect, inject, input, output, signal, untracked, viewChildren } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { DashboardService } from './dashboard.service';
 import { DevServer } from './model';
+import { LiveRun } from './live-run';
 import { TestReport } from './test-report';
 
 const VIEW_KEY = 'ccdb.previewView';
@@ -26,12 +27,13 @@ export interface PreviewTab {
     <ng-template #views>
       <div class="views" role="tablist" aria-label="Preview">
         <button type="button" role="tab" [attr.aria-selected]="view() === 'app'" (click)="setView('app')">App</button>
-        <button type="button" role="tab" [attr.aria-selected]="view() === 'tests'" (click)="setView('tests')">Tests</button>
+        <button type="button" role="tab" [attr.aria-selected]="view() === 'tests'" (click)="setView('tests')"
+                [attr.aria-label]="live.running() ? 'Tests (running)' : null">Tests@if (live.running()) {<span class="live-dot" aria-hidden="true"></span>}</button>
       </div>
     </ng-template>
 
     @if (view() === 'tests' && active(); as path) {
-      <app-test-report [path]="path"><ng-container [ngTemplateOutlet]="views" /></app-test-report>
+      <app-test-report [path]="path" [live]="live"><ng-container [ngTemplateOutlet]="views" /></app-test-report>
     } @else {
       <div class="bar">
         <ng-container [ngTemplateOutlet]="views" />
@@ -72,6 +74,20 @@ export class PreviewPane {
   protected readonly api = inject(DashboardService);
 
   protected readonly view = signal<'app' | 'tests'>(loadView());
+
+  /** The active session's Playwright run, drawn live; a run starting brings the Tests view up. */
+  protected readonly live = new LiveRun();
+
+  constructor() {
+    effect(() => this.live.watch(this.active()));
+    let was = false;
+    effect(() => {
+      const running = this.live.running();
+      if (running && !was) untracked(() => this.view.set('tests'));
+      was = running;
+    });
+    inject(DestroyRef).onDestroy(() => this.live.stop());
+  }
 
   protected setView(v: 'app' | 'tests'): void {
     this.view.set(v);

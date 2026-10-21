@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import pty from 'node-pty';
 import { WebSocketServer } from 'ws';
 import { CLAUDE, childEnv } from './claude-env.mjs';
+import { liveEnv } from './live.mjs';
 import { portEnv } from './ports.mjs';
 
 const SCROLLBACK_CHARS = 512 * 1024;
@@ -49,7 +50,7 @@ export function findTerm(path) {
 
 /** Run a PTY, keeping its scrollback for whoever attaches later. */
 function spawnTerm(file, args, cwd, extra, env = {}) {
-  const proc = pty.spawn(file, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd, env: { ...childEnv(), ...env } });
+  const proc = pty.spawn(file, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd, env: { ...childEnv(), ...liveEnv(cwd), ...env } });
   const term = { pid: proc.pid, startedAt: Date.now(), exited: false, exitCode: null, proc, buffer: '', clients: new Set(), ...extra };
   proc.onData((d) => {
     term.buffer = (term.buffer + d).slice(-SCROLLBACK_CHARS);
@@ -227,7 +228,8 @@ export function attachPtySocket(server, originOk) {
 
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://localhost');
-    if (url.pathname !== '/api/pty' || !originOk(req)) return socket.destroy();
+    if (url.pathname !== '/api/pty') return; // another endpoint's
+    if (!originOk(req)) return socket.destroy();
     const key = norm(url.searchParams.get('path') ?? '');
     const kind = url.searchParams.get('kind');
     const term = kind === 'shell'

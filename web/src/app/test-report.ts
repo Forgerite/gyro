@@ -1,9 +1,10 @@
 import { DatePipe } from '@angular/common';
 import { httpResource } from '@angular/common/http';
-import { Component, DestroyRef, ElementRef, computed, inject, input, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { AgoPipe } from './ago.pipe';
 import { DashboardService } from './dashboard.service';
+import { LiveRun } from './live-run';
 
 interface Report {
   id: string;
@@ -24,24 +25,42 @@ const POLL_MS = 5000;
   template: `
     <div class="bar">
       <ng-content />
-      @if (reports().length > 1) {
-        <select aria-label="Report" [value]="selected()?.id" (change)="pick($any($event.target).value)">
-          @for (r of reports(); track r.id) { <option [value]="r.id">{{ r.name }}</option> }
-        </select>
-      } @else if (selected(); as r) {
-        <span class="name" [title]="r.name">{{ r.name }}</span>
+      @if (live()?.running()) {
+        <span class="live-badge" role="status"><span class="live-dot" aria-hidden="true"></span>Running</span>
+        <button type="button" class="toggle" (click)="wantReport.set(!wantReport())">{{ wantReport() ? 'Watch live' : 'Last report' }}</button>
       }
-      @if (selected(); as r) {
-        @let ago = r.at | ago: now();
-        <span class="when" [title]="r.at | date: 'medium'">ran {{ ago === 'now' ? 'just now' : ago + ' ago' }}</span>
-        <button type="button" (click)="reload()" title="Reload" aria-label="Reload report">⟳</button>
-        <a [href]="r.url" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open report in a new tab">↗</a>
-      } @else {
+      @if (showLive()) {
         <span class="spacer"></span>
+      } @else {
+        @if (reports().length > 1) {
+          <select aria-label="Report" [value]="selected()?.id" (change)="pick($any($event.target).value)">
+            @for (r of reports(); track r.id) { <option [value]="r.id">{{ r.name }}</option> }
+          </select>
+        } @else if (selected(); as r) {
+          <span class="name" [title]="r.name">{{ r.name }}</span>
+        }
+        @if (selected(); as r) {
+          @let ago = r.at | ago: now();
+          <span class="when" [title]="r.at | date: 'medium'">ran {{ ago === 'now' ? 'just now' : ago + ' ago' }}</span>
+          <button type="button" (click)="reload()" title="Reload" aria-label="Reload report">⟳</button>
+          <a [href]="r.url" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open report in a new tab">↗</a>
+        } @else {
+          <span class="spacer"></span>
+        }
       }
     </div>
     <div class="frames">
-      @if (src(); as s) {
+      @if (showLive()) {
+        <div class="live" [class.multi]="live()!.streams().length > 1">
+          @for (s of live()!.streams(); track s.id) {
+            <figure [class.ended]="s.ended">
+              @if (s.src) { <img [src]="s.src" [alt]="'Browser page of ' + (s.title ?? 'a running test')" /> }
+              @else { <div class="blank">Opening the page…</div> }
+              <figcaption [title]="s.title ?? ''">{{ s.title ?? 'Test' }}</figcaption>
+            </figure>
+          }
+        </div>
+      } @else if (src(); as s) {
         <iframe #frame [src]="s" title="Playwright test report"></iframe>
       } @else if (errorText(); as m) {
         <div class="status" role="alert"><p>{{ m }}</p></div>
@@ -64,6 +83,12 @@ const POLL_MS = 5000;
 export class TestReport {
   /** The worktree of the session being previewed. */
   readonly path = input.required<string>();
+  /** Its Playwright run, while one is going. */
+  readonly live = input<LiveRun | null>(null);
+
+  /** Show the last report even though a run is going. Each new run starts on the live view. */
+  protected readonly wantReport = signal(false);
+  protected readonly showLive = computed(() => !!this.live()?.running() && !this.wantReport());
 
   private readonly api = inject(DashboardService);
   protected readonly now = this.api.now;
@@ -96,6 +121,14 @@ export class TestReport {
   });
 
   constructor() {
+    // A run starting goes to the live view; one ending has just written its report, so look now.
+    let was = false;
+    effect(() => {
+      const running = !!this.live()?.running();
+      if (running && !was) untracked(() => this.wantReport.set(false));
+      if (!running && was) untracked(() => this.res.reload());
+      was = running;
+    });
     const id = setInterval(() => this.res.reload(), POLL_MS);
     inject(DestroyRef).onDestroy(() => clearInterval(id));
   }

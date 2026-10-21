@@ -10,6 +10,7 @@ import { Worker } from 'node:worker_threads';
 import { getDev, getGithub, isClosed, setClosed, setDev, setGithub } from './state.mjs';
 import { entryBrief, githubOptions, mergePr, moveEntry, openPulls, prDetail, projectBoard, projectEntry, resolveLink, whyNotMergeable } from './github.mjs';
 import { findReports, serveReport } from './reports.mjs';
+import { attachLiveSocket } from './live.mjs';
 import { leasePorts, loadExcludedPorts, portsOf, releasePorts } from './ports.mjs';
 import { allGyro, finishGyro, gyroBrief, gyroOf, noteGyro, recordGyro, reportStep, startGyro } from './gyro.mjs';
 import { worktreeHome } from './worktrees.mjs';
@@ -740,6 +741,12 @@ const server = createServer(async (req, res) => {
   }
 });
 attachPtySocket(server, originOk);
+attachLiveSocket(server, originOk, PORT);
+// Each attach above takes only its own paths; refuse the rest.
+const SOCKETS = new Set(['/api/pty', '/api/live', '/api/live/push']);
+server.on('upgrade', (req, socket) => {
+  if (!SOCKETS.has(new URL(req.url, 'http://localhost').pathname)) socket.destroy();
+});
 loadExcludedPorts();
 server.listen(PORT, '127.0.0.1', () => console.log(`ccdb api on http://127.0.0.1:${PORT} (root ${CODE_ROOT})`));
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => (killAllTerms(), process.exit(0)));
