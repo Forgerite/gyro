@@ -1,7 +1,7 @@
 import { DestroyRef, Service, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
-import { ChangedFile, CommitInfo, EntryTarget, PrDetail, Snapshot, Term } from './model';
+import { ChangedFile, CommitInfo, EntryTarget, PrDetail, Session, Snapshot, State, Term, Worktree, looseState, sessionState } from './model';
 
 const POLL_MS = 3000;
 const PANEL_TAB_KEY = 'gyro.panelTab';
@@ -346,6 +346,22 @@ export class DashboardService {
   /** A smart feature (compose, rebase or PR) is working in this worktree: other git actions wait. */
   smartBusy(path: string): boolean {
     return !!this.composing()[path] || !!this.rebasing()[path] || !!this.creatingPr()[path];
+  }
+
+  /** A worktree tile's colour: a smart feature, a session still booting in the dock or the PR's CI running counts as working. */
+  worktreeState(wt: Worktree): State {
+    if (this.smartBusy(wt.path)) return 'busy';
+    const st = this.starting()[wt.path];
+    if (st && !st.failed) return 'busy';
+    if (wt.pr?.checksRunning) return 'busy';
+    return sessionState(wt.sessions[0]);
+  }
+
+  /** A loose session's colour: only a running one has one; a dock terminal still booting counts as working. */
+  looseSessionState(s: Session): State | 'idle' {
+    const st = s.cwd ? this.starting()[s.cwd] : undefined;
+    if (st && !st.failed) return 'busy';
+    return looseState(s);
   }
 
   clearComposed(path: string): void {

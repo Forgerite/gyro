@@ -1,11 +1,11 @@
 import { DestroyRef, Service, effect, inject } from '@angular/core';
 import { DashboardService } from './dashboard.service';
-import { Session, Snapshot, sessionState } from './model';
+import { Snapshot, State, sessionState } from './model';
 
 /** A session has to have been working this long before finishing earns a chime. */
 const MIN_BUSY_MS = 10_000;
 
-/** Plays a chime when a session goes from working (green) to waiting on you (red) after working at least 10s. */
+/** Plays a chime when a tile goes from working (green) to waiting on you (red) after working at least 10s. */
 @Service()
 export class ChimeService {
   private readonly api = inject(DashboardService);
@@ -33,19 +33,32 @@ export class ChimeService {
   private check(snap: Snapshot): void {
     const now = Date.now();
     const seen = new Set<string>();
-    for (const s of sessionsOf(snap)) {
-      seen.add(s.id);
-      const since = this.busySince.get(s.id);
-      if (sessionState(s) === 'busy') {
-        if (since === undefined) this.busySince.set(s.id, now);
+    for (const [key, state] of this.tiles(snap)) {
+      seen.add(key);
+      const since = this.busySince.get(key);
+      if (state === 'busy') {
+        if (since === undefined) this.busySince.set(key, now);
       } else if (since !== undefined) {
-        this.busySince.delete(s.id);
-        // The first snapshot only seeds: sessions already working when the page loaded have an unknown start.
-        if (this.primed && now - since >= MIN_BUSY_MS) this.play();
+        this.busySince.delete(key);
+        // The first snapshot only seeds: tiles already working when the page loaded have an unknown start.
+        if (this.primed && state === 'waiting' && now - since >= MIN_BUSY_MS) this.play();
       }
     }
-    for (const id of this.busySince.keys()) if (!seen.has(id)) this.busySince.delete(id);
+    for (const key of this.busySince.keys()) if (!seen.has(key)) this.busySince.delete(key);
     this.primed = true;
+  }
+
+  /**
+   * Every coloured tile and its state, worked out the way the dashboard colours it, so work the dashboard
+   * runs itself (a rebase, a commit message, a PR) counts as well as Claude's own turns.
+   */
+  private *tiles(snap: Snapshot): Iterable<[string, State | 'idle']> {
+    for (const w of snap.workspaces) {
+      if (w.closed) continue;
+      for (const wt of w.worktrees) yield [`wt:${wt.path}`, this.api.worktreeState(wt)];
+      for (const s of w.loose) yield [`s:${s.id}`, this.api.looseSessionState(s)];
+    }
+    for (const s of snap.unmatched) yield [`s:${s.id}`, sessionState(s)];
   }
 
   private audio(): AudioContext | null {
@@ -80,10 +93,4 @@ export class ChimeService {
       osc.stop(start + 1.25);
     });
   }
-}
-
-/** Every session the dashboard colours: open projects' worktrees and loose sessions, plus unmatched ones. */
-function sessionsOf(snap: Snapshot): Session[] {
-  const open = snap.workspaces.filter((w) => !w.closed);
-  return [...open.flatMap((w) => [...w.worktrees.flatMap((wt) => wt.sessions), ...w.loose]), ...snap.unmatched];
 }

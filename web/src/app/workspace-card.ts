@@ -2,7 +2,7 @@ import { Component, computed, inject, input, output, signal } from '@angular/cor
 import { AgoPipe } from './ago.pipe';
 import { DashboardService } from './dashboard.service';
 import { WtFlags } from './wt-flags';
-import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, looseState, sessionState } from './model';
+import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessionState } from './model';
 
 @Component({
   selector: 'app-workspace-card',
@@ -171,13 +171,8 @@ export class WorkspaceCard {
     return wt.sessions.filter((s) => s.live).length;
   }
 
-  /** A session still booting in the dock, or the PR's CI still running, counts as working. */
   protected stateOf(wt: Worktree): State {
-    if (this.api.smartBusy(wt.path)) return 'busy'; // Claude is composing or rebasing here
-    const st = this.api.starting()[wt.path];
-    if (st && !st.failed) return 'busy';
-    if (wt.pr?.checksRunning) return 'busy';
-    return sessionState(wt.sessions[0]);
+    return this.api.worktreeState(wt);
   }
 
   protected wtLabel(wt: Worktree) {
@@ -188,11 +183,8 @@ export class WorkspaceCard {
     return this.label(this.stateOf(wt), !!s?.live);
   }
 
-  /** Loose sessions only colour the card while running; a dock terminal still booting counts as working. */
   protected looseStateOf(s: Session) {
-    const st = s.cwd ? this.api.starting()[s.cwd] : undefined;
-    if (st && !st.failed) return 'busy';
-    return looseState(s);
+    return this.api.looseSessionState(s);
   }
 
   protected looseLabel(s: Session) {
