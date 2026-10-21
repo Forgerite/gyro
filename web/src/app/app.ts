@@ -3,6 +3,7 @@ import { AgoPipe } from './ago.pipe';
 import { DashboardService, QuickLayout } from './dashboard.service';
 import { LOOSE_RECENT_MS, Selection, Session, Workspace, Worktree } from './model';
 import { TerminalDock } from './terminal-dock';
+import { ChimeService } from './chime.service';
 import { NewSession } from './new-session';
 import { EntryView } from './entry-view';
 import { DiffViewer } from './diff-viewer';
@@ -42,6 +43,8 @@ const QUICK_LAYOUTS: readonly { id: QuickLayout; label: string; key: string; x: 
 })
 export class App {
   protected readonly api = inject(DashboardService);
+  /** Chimes when a session finishes working; it only needs to exist. */
+  private readonly chime = inject(ChimeService);
   private readonly filterInput = viewChild<ElementRef<HTMLInputElement>>('filterInput');
   private readonly dock = viewChild.required(TerminalDock);
   protected readonly QUICK_LAYOUTS = QUICK_LAYOUTS;
