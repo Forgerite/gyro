@@ -99,6 +99,9 @@ export function gitDetail(findWorktree) {
     const merge = (await git(wt.path, 'config', `branch.${branch}.merge`).catch(() => '')).trim();
     // A local upstream (remote ".") is just another branch; push/pull to it isn't what these buttons mean.
     if (!remote || remote === '.' || !merge) return base;
+    // Tracking a branch with another name (e.g. a worktree branched from origin/main, which git tracks by
+    // default) means it isn't published yet. Pushing to it would land this branch's commits on main.
+    if (merge !== `refs/heads/${branch}`) return { ...base, remote };
     const [ahead, behind] = (await git(wt.path, 'rev-list', '--left-right', '--count', 'HEAD...@{u}')).trim().split(/\s+/).map(Number);
     const upstreamSha = (await git(wt.path, 'rev-parse', '@{u}')).trim();
     return { branch, remote, upstream, merge, upstreamSha, ahead, behind };
