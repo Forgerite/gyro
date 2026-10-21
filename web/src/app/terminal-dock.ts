@@ -136,7 +136,7 @@ const clampSplit = (f: number) => Math.min(0.8, Math.max(0.2, f));
           aria-valuemax="80"
           title="Drag to resize · double-click to split evenly"
           (pointerdown)="startResize($event)"
-          (dblclick)="setSplit(0.5)"
+          (dblclick)="setSplitByHand(0.5)"
           (keydown)="splitKey($event)"
         ></div>
         <app-preview-pane id="dock-preview" [tabs]="tabs()" [active]="active()" (showOutput)="showPane('dev')" />
@@ -252,13 +252,28 @@ export class TerminalDock {
     save(SPLIT_KEY, String(this.split()));
   }
 
+  /** A quick layout: give the terminal this share of the dock, showing the preview if it was hidden. */
+  focusSplit(f: number): void {
+    if (!this.previewOn()) this.togglePreview();
+    this.setSplit(f);
+  }
+
+  /** Resized by hand: the dock no longer matches a quick layout. */
+  protected setSplitByHand(f: number): void {
+    this.api.setQuickLayout(null);
+    this.setSplit(f);
+  }
+
   /** Drag the line between terminal and preview. Captures the pointer so the page in the frame can't swallow it. */
   protected startResize(e: PointerEvent): void {
     if (e.button !== 0) return;
     const handle = e.target as HTMLElement;
     const box = handle.parentElement!.getBoundingClientRect();
     handle.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => this.split.set(clampSplit((ev.clientX - box.left) / box.width));
+    const move = (ev: PointerEvent) => {
+      this.api.setQuickLayout(null);
+      this.split.set(clampSplit((ev.clientX - box.left) / box.width));
+    };
     const up = () => {
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
@@ -271,8 +286,8 @@ export class TerminalDock {
   protected splitKey(e: KeyboardEvent): void {
     const step = e.shiftKey ? 0.1 : 0.05;
     const by = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
-    if (by) this.setSplit(this.split() + by);
-    else if (e.key === 'Home' || e.key === 'End') this.setSplit(e.key === 'Home' ? 0.2 : 0.8);
+    if (by) this.setSplitByHand(this.split() + by);
+    else if (e.key === 'Home' || e.key === 'End') this.setSplitByHand(e.key === 'Home' ? 0.2 : 0.8);
     else return;
     e.preventDefault();
     e.stopPropagation();

@@ -7,6 +7,7 @@ const POLL_MS = 3000;
 const PANEL_TAB_KEY = 'ccdb.panelTab';
 const DIFF_MODE_KEY = 'ccdb.diffMode';
 const DOCK_OPEN_KEY = 'ccdb.dockOpen';
+const QUICK_LAYOUT_KEY = 'ccdb.quickLayout';
 
 export type DiffMode = 'inline' | 'split';
 
@@ -32,6 +33,10 @@ export function workingEntries(files: ChangedFile[]): { file: string; view: Diff
 }
 
 export type PanelTab = 'session' | 'git' | 'pr';
+
+/** A header preset that gives one of the four quadrants most of the screen. */
+export type QuickLayout = 'tiles' | 'detail' | 'terminal' | 'preview';
+const QUICK_LAYOUTS: readonly string[] = ['tiles', 'detail', 'terminal', 'preview'];
 
 function loadPanelTab(): PanelTab {
   try {
@@ -67,6 +72,15 @@ export class DashboardService {
   setDockOpen(open: boolean): void {
     this.dockOpen.set(open);
     save(DOCK_OPEN_KEY, String(open));
+  }
+
+  /** The quick layout the dividers were last set to; null once one is dragged by hand. */
+  readonly quickLayout = signal<QuickLayout | null>(loadQuickLayout());
+
+  setQuickLayout(layout: QuickLayout | null): void {
+    if (this.quickLayout() === layout) return;
+    this.quickLayout.set(layout);
+    save(QUICK_LAYOUT_KEY, layout ?? '');
   }
 
   /** Board entry open in the detail panel (over whatever is selected); null when closed. */
@@ -455,6 +469,11 @@ export interface Starting {
   resume: boolean;
   /** Set when the server refused or failed to start the terminal. */
   failed?: string;
+}
+
+function loadQuickLayout(): QuickLayout | null {
+  const v = load(QUICK_LAYOUT_KEY);
+  return v && QUICK_LAYOUTS.includes(v) ? (v as QuickLayout) : null;
 }
 
 function load(key: string): string | null {

@@ -23,6 +23,18 @@
     <span class="spacer"></span>
     @if (api.error(); as err) { <span class="error" role="alert">{{ err }}</span> }
     <span class="hint"><kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> open/resume · <kbd>u</kbd> up · <kbd>c</kbd> code · <kbd>g</kbd> git · <kbd>p</kbd> PR</span>
+    <div class="layouts" role="group" aria-label="Quick layouts">
+      @for (l of QUICK_LAYOUTS; track l.id; let i = $index) {
+        <button type="button" (click)="applyLayout(l.id)" [attr.aria-pressed]="api.quickLayout() === l.id"
+                [attr.aria-label]="'Focus ' + l.label" [attr.aria-keyshortcuts]="'Control+Shift+' + (i + 1)"
+                [title]="'Focus ' + l.label + ' (Ctrl+Shift+' + (i + 1) + ')'">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <rect class="cell" [attr.x]="l.x" [attr.y]="l.y" width="6" height="6" />
+            <path d="M2 2h12v12H2zM8 2v12M2 8h12" />
+          </svg>
+        </button>
+      }
+    </div>
     <button type="button" class="wide-btn" (click)="toggleWide()" [attr.aria-pressed]="detailWide()"
             [title]="(detailWide() ? 'Contract' : 'Expand') + ' the detail panel (e)'">
       <svg viewBox="0 0 16 16" aria-hidden="true">

@@ -60,6 +60,7 @@ export class TerminalView {
       if (e.type !== 'keydown') return true;
       const key = e.key.toLowerCase();
       if (e.ctrlKey && (e.code === 'Backquote' || key === '`')) return false; // app-level toggle
+      if (e.ctrlKey && e.shiftKey && /^Digit[1-4]$/.test(e.code)) return false; // app-level quick layouts
       // Paste: xterm would send ^V and swallow the event. Let the browser fire a real paste,
       // which xterm forwards as bracketed paste. Dictation tools (e.g. Wispr Flow) insert this way.
       if ((e.ctrlKey && !e.altKey && key === 'v') || (e.shiftKey && key === 'insert')) return false;

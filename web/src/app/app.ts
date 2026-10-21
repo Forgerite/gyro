@@ -1,6 +1,6 @@
 import { Component, ElementRef, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { AgoPipe } from './ago.pipe';
-import { DashboardService } from './dashboard.service';
+import { DashboardService, QuickLayout } from './dashboard.service';
 import { LOOSE_RECENT_MS, Selection, Session, Workspace, Worktree } from './model';
 import { TerminalDock } from './terminal-dock';
 import { NewSession } from './new-session';
@@ -22,6 +22,16 @@ const DETAIL_MIN = 320;
 const DETAIL_DEFAULT = 440;
 /** Expanded, the tiles keep this much room. */
 const TILES_MIN = 320;
+/** Share of the width (top row) or height and dock width (bottom row) a quick layout gives its quadrant. */
+const FOCUS_SHARE = 0.72;
+
+/** The header's quick layouts, in quadrant order: Ctrl+Shift+1 to 4. */
+const QUICK_LAYOUTS: readonly { id: QuickLayout; label: string; key: string; x: number; y: number }[] = [
+  { id: 'tiles', label: 'Workspaces', key: 'Digit1', x: 2, y: 2 },
+  { id: 'detail', label: 'Details', key: 'Digit2', x: 8, y: 2 },
+  { id: 'terminal', label: 'Terminal', key: 'Digit3', x: 2, y: 8 },
+  { id: 'preview', label: 'Preview', key: 'Digit4', x: 8, y: 8 },
+];
 
 @Component({
   selector: 'app-root',
@@ -33,6 +43,8 @@ const TILES_MIN = 320;
 export class App {
   protected readonly api = inject(DashboardService);
   private readonly filterInput = viewChild<ElementRef<HTMLInputElement>>('filterInput');
+  private readonly dock = viewChild.required(TerminalDock);
+  protected readonly QUICK_LAYOUTS = QUICK_LAYOUTS;
 
   protected readonly filter = signal('');
   protected readonly activeOnly = signal(false);
@@ -285,20 +297,38 @@ export class App {
     const handle = e.target as HTMLElement;
     handle.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
-      const h = Math.min(window.innerHeight - 160, Math.max(DOCK_MIN, window.innerHeight - ev.clientY));
-      this.dockHeight.set(Math.round(h));
+      this.api.setQuickLayout(null);
+      this.dockHeight.set(clampDock(window.innerHeight - ev.clientY));
     };
     const up = () => {
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
-      try { localStorage.setItem(DOCK_KEY, String(this.dockHeight())); } catch { /* storage unavailable */ }
+      saveDockHeight(this.dockHeight());
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
   }
 
   protected toggleWide() {
+    this.api.setQuickLayout(null);
     this.detailWide.update((w) => !w);
+  }
+
+  /** Set all three dividers so one quadrant gets most of the screen; the others stay usable. */
+  protected applyLayout(layout: QuickLayout) {
+    const { innerWidth: w, innerHeight: h } = window;
+    this.detailWide.set(false);
+    if (layout === 'tiles' || layout === 'detail') {
+      this.detailWidth.set(clampDetail(w * (layout === 'detail' ? FOCUS_SHARE : 1 - FOCUS_SHARE)));
+      saveDetailWidth(this.detailWidth());
+      this.dockHeight.set(clampDock(h * (1 - FOCUS_SHARE)));
+    } else {
+      this.api.setDockOpen(true);
+      this.dockHeight.set(clampDock(h * FOCUS_SHARE));
+      this.dock().focusSplit(layout === 'terminal' ? FOCUS_SHARE : 1 - FOCUS_SHARE);
+    }
+    saveDockHeight(this.dockHeight());
+    this.api.setQuickLayout(layout);
   }
 
   protected toggleMain() {
@@ -312,6 +342,7 @@ export class App {
     const handle = e.target as HTMLElement;
     handle.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
+      this.api.setQuickLayout(null);
       this.detailWide.set(false);
       this.detailWidth.set(clampDetail(window.innerWidth - ev.clientX));
     };
@@ -330,6 +361,7 @@ export class App {
     const by = e.key === 'ArrowLeft' ? step : e.key === 'ArrowRight' ? -step : 0;
     if (by) {
       const from = this.detailWide() ? window.innerWidth - TILES_MIN : this.detailWidth();
+      this.api.setQuickLayout(null);
       this.detailWide.set(false);
       this.detailWidth.set(clampDetail(from + by));
       saveDetailWidth(this.detailWidth());
@@ -371,6 +403,13 @@ export class App {
     // Single handler for Ctrl+`, including from inside xterm (which only swallows the key).
     if (e.ctrlKey && (e.code === 'Backquote' || e.key === '`')) {
       this.toggleTerminal();
+      e.preventDefault();
+      return;
+    }
+    // Quick layouts: Ctrl+Shift+1 to 4 work from anywhere, terminal included (by code: Shift turns 1 into !).
+    const quick = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && QUICK_LAYOUTS.find((l) => l.key === e.code);
+    if (quick) {
+      this.applyLayout(quick.id);
       e.preventDefault();
       return;
     }
@@ -496,6 +535,14 @@ function saveDetailWidth(w: number) {
 
 function loadShowMain() {
   try { return localStorage.getItem(MAIN_KEY) === '1'; } catch { return false; }
+}
+
+function clampDock(h: number) {
+  return Math.round(Math.min(window.innerHeight - 160, Math.max(DOCK_MIN, h)));
+}
+
+function saveDockHeight(h: number) {
+  try { localStorage.setItem(DOCK_KEY, String(h)); } catch { /* storage unavailable */ }
 }
 
 function loadDockHeight() {
