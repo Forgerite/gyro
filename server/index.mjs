@@ -11,6 +11,7 @@ import { getDev, getGithub, isClosed, setClosed, setDev, setGithub } from './sta
 import { entryBrief, githubOptions, mergePr, moveEntry, openPulls, prDetail, projectBoard, projectEntry, resolveLink, whyNotMergeable } from './github.mjs';
 import { findReports, serveReport } from './reports.mjs';
 import { attachLiveSocket } from './live.mjs';
+import { listRecordings, readFrame, recordingIndex } from './recordings.mjs';
 import { leasePorts, loadExcludedPorts, portsOf, releasePorts } from './ports.mjs';
 import { allGyro, finishGyro, gyroBrief, gyroOf, noteGyro, recordGyro, reportStep, startGyro } from './gyro.mjs';
 import { worktreeHome } from './worktrees.mjs';
@@ -514,6 +515,25 @@ const server = createServer(async (req, res) => {
       if (!wt) throw httpError(400, 'unknown worktree');
       const base = `http://127.0.0.1:${PORT}/report`;
       return send(res, 200, { reports: (await findReports(wt.path)).map((r) => ({ ...r, url: `${base}/${r.id}/` })) });
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/recordings')) {
+      // Recorded live runs (see recordings.mjs): the list, one run's index, and its frames.
+      const url = new URL(req.url, 'http://localhost');
+      const wt = await knownTarget(url.searchParams.get('path'));
+      if (!wt) throw httpError(400, 'unknown worktree');
+      const id = url.searchParams.get('id');
+      if (url.pathname === '/api/recordings') return send(res, 200, { recordings: await listRecordings(wt.path) });
+      if (url.pathname === '/api/recordings/index') {
+        const idx = await recordingIndex(wt.path, id);
+        return idx ? send(res, 200, idx) : send(res, 404, { error: 'Recording not found' });
+      }
+      if (url.pathname === '/api/recordings/frame') {
+        const buf = await readFrame(wt.path, id, Number(url.searchParams.get('o')), Number(url.searchParams.get('n')));
+        if (!buf) return send(res, 404, { error: 'Frame not found' });
+        // A finished recording never changes, so the browser can keep every frame it has seen.
+        res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': buf.length, 'cache-control': 'private, max-age=86400, immutable' });
+        return res.end(buf);
+      }
     }
     if (req.method === 'GET' && req.url.startsWith('/api/worktrees/bases?')) {
       const ws = await knownProject(new URL(req.url, 'http://localhost').searchParams.get('path'));

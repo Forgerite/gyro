@@ -2,6 +2,7 @@
 // (see pw-live-hook.cjs), and the dashboard watches them over /api/live.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
+import { recordEnd, recordFrame, recordStart } from './recordings.mjs';
 
 const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
@@ -52,7 +53,7 @@ export function attachLiveSocket(server, originOk, port) {
     const path = url.searchParams.get('path');
     if (url.pathname === '/api/live/push') {
       if (!path || !tokenOk(url.searchParams.get('token'))) return socket.destroy();
-      wss.handleUpgrade(req, socket, head, (ws) => pusher(runOf(path), ws));
+      wss.handleUpgrade(req, socket, head, (ws) => pusher(path, runOf(path), ws));
     } else if (url.pathname === '/api/live') {
       if (!path || !originOk(req)) return socket.destroy();
       wss.handleUpgrade(req, socket, head, (ws) => viewer(runOf(path), ws));
@@ -60,11 +61,17 @@ export function attachLiveSocket(server, originOk, port) {
   });
 }
 
-function pusher(run, ws) {
+/** Recording never gets in the way of the live view. */
+function record(fn, ...args) {
+  try { fn(...args); } catch { /* disk full, folder gone: the run still shows live */ }
+}
+
+function pusher(path, run, ws) {
   const mine = new Set();
   const end = (id) => {
     if (!run.streams.delete(id)) return;
     mine.delete(id);
+    record(recordEnd, path, id);
     tell(run, { t: 'end', id });
   };
   ws.on('message', (raw) => {
@@ -76,7 +83,10 @@ function pusher(run, ws) {
     if (m.t !== 'start' && m.t !== 'frame') return;
     const s = run.streams.get(id) ?? { id, title: null, w: 0, h: 0, data: null };
     if (typeof m.title === 'string') s.title = m.title.slice(0, 300);
-    if (m.t === 'frame' && typeof m.data === 'string') Object.assign(s, { data: m.data, w: m.w | 0, h: m.h | 0 });
+    if (m.t === 'frame' && typeof m.data === 'string') {
+      Object.assign(s, { data: m.data, w: m.w | 0, h: m.h | 0 });
+      record(recordFrame, path, id, s.title, m.data);
+    } else if (m.t === 'start') record(recordStart, path, id, s.title);
     run.streams.set(id, s);
     mine.add(id);
     tell(run, { t: 'frame', ...s });

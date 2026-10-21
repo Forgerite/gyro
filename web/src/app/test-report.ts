@@ -5,6 +5,7 @@ import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { AgoPipe } from './ago.pipe';
 import { DashboardService } from './dashboard.service';
 import { LiveRun } from './live-run';
+import { Recording, RecordingPlayer, formatMs } from './recording-player';
 
 interface Report {
   id: string;
@@ -21,7 +22,7 @@ const POLL_MS = 5000;
 /** The worktree's latest Playwright HTML report, as Playwright draws it. */
 @Component({
   selector: 'app-test-report',
-  imports: [AgoPipe, DatePipe],
+  imports: [AgoPipe, DatePipe, RecordingPlayer],
   template: `
     <div class="bar">
       <ng-content />
@@ -31,6 +32,13 @@ const POLL_MS = 5000;
       }
       @if (showLive()) {
         <span class="spacer"></span>
+      } @else if (replaying(); as rec) {
+        <select aria-label="Recorded run" (change)="replay($any($event.target).value || null)">
+          @for (r of recordings(); track r.id) {
+            <option [value]="r.id" [selected]="r.id === rec.id">{{ label(r) }}</option>
+          }
+        </select>
+        <button type="button" class="toggle" (click)="replay(null)">Back to report</button>
       } @else {
         @if (reports().length > 1) {
           <select aria-label="Report" [value]="selected()?.id" (change)="pick($any($event.target).value)">
@@ -38,6 +46,12 @@ const POLL_MS = 5000;
           </select>
         } @else if (selected(); as r) {
           <span class="name" [title]="r.name">{{ r.name }}</span>
+        }
+        @if (recordings().length) {
+          <select class="replays" aria-label="Replay a recorded run" (change)="replay($any($event.target).value || null)">
+            <option value="" selected>Replay a run…</option>
+            @for (r of recordings(); track r.id) { <option [value]="r.id">{{ label(r) }}</option> }
+          </select>
         }
         @if (selected(); as r) {
           @let ago = r.at | ago: now();
@@ -60,6 +74,8 @@ const POLL_MS = 5000;
             </figure>
           }
         </div>
+      } @else if (replaying(); as rec) {
+        <app-recording-player [path]="path()" [recording]="rec" />
       } @else if (src(); as s) {
         <iframe #frame [src]="s" title="Playwright test report"></iframe>
       } @else if (errorText(); as m) {
@@ -109,6 +125,16 @@ export class TestReport {
     return list.find((r) => r.id === this.picked()[this.path()]) ?? list[0] ?? null;
   });
 
+  /** Recorded live runs (server/recordings.mjs), newest first. */
+  private readonly recs = httpResource<{ recordings: Recording[] }>(() => ({ url: '/api/recordings', params: { path: this.path() } }));
+  protected readonly recordings = computed(() => (this.recs.hasValue() ? this.recs.value().recordings : []));
+  /** The recording being played back, per worktree; none shows the report. */
+  private readonly replayed = signal<Record<string, string | null>>({});
+  protected readonly replaying = computed(() => {
+    const id = this.replayed()[this.path()];
+    return (id && this.recordings().find((r) => r.id === id)) || null;
+  });
+
   /** One trusted URL per report run: a new run changes it, which reloads the frame. */
   private readonly trusted = new Map<string, SafeResourceUrl>();
   protected readonly src = computed(() => {
@@ -125,16 +151,26 @@ export class TestReport {
     let was = false;
     effect(() => {
       const running = !!this.live()?.running();
-      if (running && !was) untracked(() => this.wantReport.set(false));
+      if (running && !was) untracked(() => (this.wantReport.set(false), this.replay(null)));
       if (!running && was) untracked(() => this.res.reload());
       was = running;
     });
-    const id = setInterval(() => this.res.reload(), POLL_MS);
+    const id = setInterval(() => (this.res.reload(), this.recs.reload()), POLL_MS);
     inject(DestroyRef).onDestroy(() => clearInterval(id));
   }
 
   protected pick(id: string): void {
     this.picked.update((m) => ({ ...m, [this.path()]: id }));
+  }
+
+  protected replay(id: string | null): void {
+    this.replayed.update((m) => ({ ...m, [this.path()]: id }));
+  }
+
+  protected label(r: Recording): string {
+    const when = new Date(r.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const tests = r.tests ? ` · ${r.tests} test${r.tests === 1 ? '' : 's'}` : '';
+    return `${when} · ${formatMs(r.ms)}${tests}`;
   }
 
   protected reload(): void {
