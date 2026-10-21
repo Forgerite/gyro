@@ -1,11 +1,11 @@
-// Preloaded (NODE_OPTIONS --require) into everything ccdb's terminals run. When a process loads
-// playwright-core, every page it opens is screencast to ccdb (any browser with Playwright's own
+// Preloaded (NODE_OPTIONS --require) into everything Gyro's terminals run. When a process loads
+// playwright-core, every page it opens is screencast to Gyro (any browser with Playwright's own
 // page.screencast, Chromium only before that), so the dashboard can show a
 // test run live. It does nothing anywhere else, and never lets a failure reach the test run.
 'use strict';
 
 (() => {
-  const url = process.env.CCDB_LIVE_URL;
+  const url = process.env.GYRO_LIVE_URL;
   // Bun (claude.exe) honours NODE_OPTIONS too; it never runs Playwright, so stay out of its way.
   if (!url || process.versions.bun || typeof globalThis.WebSocket !== 'function') return;
 
@@ -35,7 +35,7 @@
     inst.addListener({ runAfterCreateBrowserContext: onContext, onDidCreateBrowserContext: onContext });
   }
 
-  // ---- the connection to ccdb: one socket per process, opened on the first page ----
+  // ---- the connection to Gyro: one socket per process, opened on the first page ----
 
   let ws = null;
   let queue = [];
@@ -67,7 +67,7 @@
     context.on('page', watch);
   }
 
-  /** Announce a page to ccdb and end it when the page closes; `frame()` sends what it draws. */
+  /** Announce a page to Gyro and end it when the page closes; `frame()` sends what it draws. */
   function stream(page) {
     const id = `${process.pid}-${nextId++}`;
     const state = { ended: false };
@@ -82,18 +82,18 @@
 
   /**
    * page.screencast takes one caller at a time. The test comes first: if it starts its own, ours
-   * stops and the frames it asked for are copied to ccdb too; when it stops, ours resumes.
+   * stops and the frames it asked for are copied to Gyro too; when it stops, ours resumes.
    */
   function viaScreencast(page) {
     const sc = page.screencast;
     const s = stream(page);
-    const toCcdb = (f) => s.frame(f.data.toString('base64'), f.viewportWidth, f.viewportHeight);
+    const toGyro = (f) => s.frame(f.data.toString('base64'), f.viewportWidth, f.viewportHeight);
     const start = sc.start;
     const stop = sc.stop;
     let ours = false;
     let starting = null;
     const startOurs = () =>
-      (starting = hidden(page, () => start.call(sc, { onFrame: toCcdb, quality: 60, size: frameSize(page) }))
+      (starting = hidden(page, () => start.call(sc, { onFrame: toGyro, quality: 60, size: frameSize(page) }))
         .then(() => { ours = true; }, () => {})
         .finally(() => { starting = null; }));
     sc.start = async function (options = {}) {
@@ -104,7 +104,7 @@
       }
       const theirs = options.onFrame;
       try {
-        return await start.call(sc, { ...options, onFrame: (f) => { toCcdb(f); return theirs?.(f); } });
+        return await start.call(sc, { ...options, onFrame: (f) => { toGyro(f); return theirs?.(f); } });
       } catch (e) {
         // Theirs never started, but Playwright still thinks one is running until it's stopped.
         if (!s.ended && !page.isClosed()) hidden(page, () => stop.call(sc)).catch(() => {}).then(startOurs);

@@ -6,8 +6,8 @@ import { sessionState } from './model';
 
 /** After this long without output, the overlay says so instead of just spinning. */
 const SLOW_MS = 8000;
-const SPLIT_KEY = 'ccdb.previewSplit';
-const PREVIEW_KEY = 'ccdb.preview';
+const SPLIT_KEY = 'gyro.previewSplit';
+const PREVIEW_KEY = 'gyro.preview';
 
 function load(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }

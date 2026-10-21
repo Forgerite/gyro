@@ -1,5 +1,5 @@
 // Smart feature: "Auto rebase". Headless claude stashes uncommitted work, rebases the worktree's
-// branch onto trunk, reapplies the stash and resolves any conflicts along the way. ccdb fetches
+// branch onto trunk, reapplies the stash and resolves any conflicts along the way. Gyro fetches
 // first, keeps backup refs so nothing can be lost, and checks the result afterwards.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -79,13 +79,13 @@ export function autoRebase({ path, trunk }) {
 
     // Backups first: the branch tip, and a snapshot of uncommitted (tracked) work.
     const stamp = Date.now();
-    const backup = `refs/ccdb/backup/${branch}/${stamp}`;
+    const backup = `refs/gyro/backup/${branch}/${stamp}`;
     const before = await git(path, 'rev-parse', 'HEAD');
     await git(path, 'update-ref', `${backup}/head`, before);
     const wip = await tryGit(path, 'stash', 'create');
     if (wip) await git(path, 'update-ref', `${backup}/wip`, wip);
     const dirty = !!(await git(path, 'status', '--porcelain'));
-    const stashMsg = `ccdb auto-rebase ${stamp}`;
+    const stashMsg = `gyro auto-rebase ${stamp}`;
 
     const run = await runClaude(path, prompt({ branch, trunk, stashMsg, dirty }), {
       tools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'],

@@ -1,9 +1,9 @@
-// ccdb's own small persistent state (closed projects, GitHub links, dev commands, port leases), in ~/.claude/ccdb/state.json.
+// Gyro's own small persistent state (closed projects, GitHub links, dev commands, port leases), in ~/.claude/gyro/state.json.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { DATA_DIR } from './data-dir.mjs';
 import { dirname, join } from 'node:path';
 
-const FILE = join(homedir(), '.claude', 'ccdb', 'state.json');
+const FILE = join(DATA_DIR, 'state.json');
 const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
 let state = load();
@@ -53,7 +53,7 @@ export function setGithub(path, link) {
   save();
 }
 
-/** The project's dev command as set in ccdb: a command, '' for none, or undefined to detect it. */
+/** The project's dev command as set in Gyro: a command, '' for none, or undefined to detect it. */
 export function getDev(path) {
   return state.dev[norm(path)];
 }

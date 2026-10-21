@@ -1,6 +1,6 @@
 // Where this project's services listen. Never hardcode a port: add the service to OFFSETS and FALLBACK
 // and get it from here. Ports come from, in order:
-//   1. CCDB_PORT_BASE: the block Gyro (ccdb) leases this worktree, set for everything it starts here;
+//   1. GYRO_PORT_BASE: the block Gyro leases this worktree, set for everything it starts here;
 //   2. a running Gyro, asked for this worktree's block (a terminal you opened yourself);
 //   3. FALLBACK: fixed ports, for CI and machines without Gyro.
 // Each service keeps a fixed offset in the block: 0 is the main app (the dev server, what Gyro's preview
@@ -14,11 +14,11 @@ import { fileURLToPath } from 'node:url';
 export const OFFSETS = { web: 0 };
 const FALLBACK = { web: 3000 };
 
-const GYRO = process.env.CCDB_URL ?? 'http://127.0.0.1:4317';
+const GYRO = process.env.GYRO_URL ?? 'http://127.0.0.1:4317';
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 
 async function block() {
-  if (process.env.CCDB_PORT_BASE) return { base: Number(process.env.CCDB_PORT_BASE), from: 'env' };
+  if (process.env.GYRO_PORT_BASE) return { base: Number(process.env.GYRO_PORT_BASE), from: 'env' };
   try {
     const res = await fetch(`${GYRO}/api/ports?path=${encodeURIComponent(ROOT)}`, { signal: AbortSignal.timeout(1500) });
     if (res.ok) return { base: (await res.json()).base, from: 'gyro' };

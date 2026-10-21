@@ -14,10 +14,10 @@ import { SessionPick, WorkspaceCard } from './workspace-card';
 import { BulkArchivePanel, PickedSession } from './bulk-archive-panel';
 
 const STALE_MS = 14 * 86_400_000;
-const DOCK_KEY = 'ccdb.dockHeight';
-const MAIN_KEY = 'ccdb.showMain';
+const DOCK_KEY = 'gyro.dockHeight';
+const MAIN_KEY = 'gyro.showMain';
 const DOCK_MIN = 120;
-const DETAIL_KEY = 'ccdb.detailWidth';
+const DETAIL_KEY = 'gyro.detailWidth';
 const DETAIL_MIN = 320;
 const DETAIL_DEFAULT = 440;
 /** Expanded, the tiles keep this much room. */

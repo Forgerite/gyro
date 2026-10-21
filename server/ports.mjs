@@ -1,4 +1,4 @@
-// Port leases: every worktree ccdb runs things in gets its own block of ports, unique on this machine,
+// Port leases: every worktree Gyro runs things in gets its own block of ports, unique on this machine,
 // so dev servers and test stacks of different projects and worktrees never collide. The block goes to
 // the worktree's processes as environment variables; repos map their services into it.
 import { execFile } from 'node:child_process';
@@ -30,7 +30,7 @@ const usable = (slot) => {
   return !excluded.some(([a, b]) => a < base + PORT_COUNT && b >= base);
 };
 
-/** Leases whose folder is gone (worktree removed outside ccdb) go back to the pool. */
+/** Leases whose folder is gone (worktree removed outside Gyro) go back to the pool. */
 function prune(leases) {
   const kept = Object.fromEntries(Object.entries(leases).filter(([path]) => existsSync(path)));
   if (Object.keys(kept).length !== Object.keys(leases).length) setPorts(kept);
@@ -66,6 +66,10 @@ export function releasePorts(path) {
 export function portEnv(path, { dev = false } = {}) {
   const { slot, base, count } = leasePorts(path);
   return {
+    GYRO_PORT_SLOT: String(slot),
+    GYRO_PORT_BASE: String(base),
+    GYRO_PORT_COUNT: String(count),
+    // The names from before the rename, for projects whose ports module still reads them.
     CCDB_PORT_SLOT: String(slot),
     CCDB_PORT_BASE: String(base),
     CCDB_PORT_COUNT: String(count),

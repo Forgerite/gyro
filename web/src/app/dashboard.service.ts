@@ -4,10 +4,10 @@ import { Observable, tap } from 'rxjs';
 import { ChangedFile, CommitInfo, EntryTarget, PrDetail, Snapshot, Term } from './model';
 
 const POLL_MS = 3000;
-const PANEL_TAB_KEY = 'ccdb.panelTab';
-const DIFF_MODE_KEY = 'ccdb.diffMode';
-const DOCK_OPEN_KEY = 'ccdb.dockOpen';
-const QUICK_LAYOUT_KEY = 'ccdb.quickLayout';
+const PANEL_TAB_KEY = 'gyro.panelTab';
+const DIFF_MODE_KEY = 'gyro.diffMode';
+const DOCK_OPEN_KEY = 'gyro.dockOpen';
+const QUICK_LAYOUT_KEY = 'gyro.quickLayout';
 
 export type DiffMode = 'inline' | 'split';
 
@@ -229,7 +229,7 @@ export class DashboardService {
     });
   }
 
-  /** Convert a project to Gyro: ccdb's steps run now, then a Claude session starts in a worktree made for it. */
+  /** Convert a project to Gyro: Gyro's own steps run now, then a Claude session starts in a worktree made for it. */
   convertToGyro(path: string): Observable<{ worktree: string }> {
     return this.http.post<{ worktree: string; terms: Term[] }>('/api/gyro/convert', { path }).pipe(
       tap(({ worktree, terms }) => this.termStarted(worktree, terms)),
@@ -247,7 +247,7 @@ export class DashboardService {
   doneStarting(path: string): void {
     const st = this.starting()[path];
     if (!st) return;
-    if (!st.failed) console.info(`[ccdb] claude ready in ${Date.now() - st.at}ms`, path);
+    if (!st.failed) console.info(`[gyro] claude ready in ${Date.now() - st.at}ms`, path);
     this.starting.update(({ [path]: _, ...rest }) => rest);
   }
 
@@ -437,7 +437,7 @@ export interface RebaseResult {
   moved?: boolean;
   note?: string;
   summary?: string | null;
-  /** Whatever ccdb's own checks found wrong afterwards (empty = clean). */
+  /** Whatever Gyro's own checks found wrong afterwards (empty = clean). */
   problems: string[];
   backup?: { head: string; wip: string | null };
   fetchNote?: string | null;

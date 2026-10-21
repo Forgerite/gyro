@@ -6,7 +6,7 @@ import { DevServer } from './model';
 import { LiveRun } from './live-run';
 import { TestReport } from './test-report';
 
-const VIEW_KEY = 'ccdb.previewView';
+const VIEW_KEY = 'gyro.previewView';
 
 export interface PreviewTab {
   path: string;

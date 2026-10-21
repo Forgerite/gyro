@@ -79,7 +79,7 @@ import { OpenRequest } from './worktree-panel';
           <button type="button" class="link" (click)="confirmFor.set(null)">cancel</button>
         } @else {
           <button type="button" class="arch-btn" (click)="confirmFor.set(s.id)" [disabled]="!!s.live || running()"
-                  [title]="s.live || running() ? 'Close the session first' : 'Move to ~/.claude/ccdb-archive (reversible)'">
+                  [title]="s.live || running() ? 'Close the session first' : 'Move to ~/.claude/gyro-archive (reversible)'">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12v3H2zM3 6.5v6h10v-6M6.5 9h3" /></svg>Archive
           </button>
         }

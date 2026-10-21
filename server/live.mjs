@@ -1,4 +1,4 @@
-// Live Playwright runs: test workers started from ccdb's terminals screencast their pages here
+// Live Playwright runs: test workers started from Gyro's terminals screencast their pages here
 // (see pw-live-hook.cjs), and the dashboard watches them over /api/live.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
@@ -7,7 +7,7 @@ import { recordEnd, recordFrame, recordStart } from './recordings.mjs';
 const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
 const HOOK = new URL('./pw-live-hook.cjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
-/** Only processes ccdb started know it, so nothing else can push frames into the dashboard. */
+/** Only processes Gyro started know it, so nothing else can push frames into the dashboard. */
 const TOKEN = randomBytes(18).toString('base64url');
 let apiPort = null;
 
@@ -25,7 +25,7 @@ export function liveEnv(path) {
   const q = new URLSearchParams({ path, token: TOKEN });
   const prev = process.env.NODE_OPTIONS ? `${process.env.NODE_OPTIONS} ` : '';
   return {
-    CCDB_LIVE_URL: `ws://127.0.0.1:${apiPort}/api/live/push?${q}`,
+    GYRO_LIVE_URL: `ws://127.0.0.1:${apiPort}/api/live/push?${q}`,
     NODE_OPTIONS: `${prev}--require ${JSON.stringify(HOOK)}`,
   };
 }

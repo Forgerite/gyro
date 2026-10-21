@@ -33,7 +33,7 @@ export type OpenRequest = {
         @if (w.git.dirty) { <span class="dirty">● {{ w.git.dirty }} uncommitted</span> }
         @if (w.git.unmerged) { <span class="unmerged" [title]="'vs ' + w.git.trunk">◆ {{ w.git.unmerged }} unmerged</span> }
         @if (w.ports; as p) {
-          <span class="ports" [title]="'Leased to this worktree. Its processes get CCDB_PORT_BASE=' + p.base + ' and CCDB_PORT_COUNT=' + p.count + '; the dev server also gets PORT=' + p.base + '.'">ports {{ p.base }}–{{ p.base + p.count - 1 }}</span>
+          <span class="ports" [title]="'Leased to this worktree. Its processes get GYRO_PORT_BASE=' + p.base + ' and GYRO_PORT_COUNT=' + p.count + '; the dev server also gets PORT=' + p.base + '.'">ports {{ p.base }}–{{ p.base + p.count - 1 }}</span>
         }
         <span class="acts">
           @if (canRebase()) {

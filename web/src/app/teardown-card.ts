@@ -43,7 +43,7 @@ export interface ArchiveResult {
       @let p = plan()!;
       <h3>Archive {{ p.isMain ? 'sessions in' : '' }} {{ p.name }}?</h3>
       <ul class="steps">
-        <li>Archive {{ p.sessions }} session{{ p.sessions === 1 ? '' : 's' }} to <code>~/.claude/ccdb-archive</code></li>
+        <li>Archive {{ p.sessions }} session{{ p.sessions === 1 ? '' : 's' }} to <code>~/.claude/gyro-archive</code></li>
         @if (p.dockTerminal) { <li>Close the terminal running in the dock</li> }
         @if (p.isMain) {
           <li class="muted">The main checkout stays — it's the repository itself.</li>

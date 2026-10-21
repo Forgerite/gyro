@@ -1,17 +1,17 @@
 // Recordings of live Playwright runs: every frame live.mjs relays to the dashboard is also written
 // to disk, so a run can be played back in the Tests tab after it ends.
 //
-// One folder per run under ~/.claude/ccdb/recordings/<worktree hash>/<id>/:
+// One folder per run under ~/.claude/gyro/recordings/<worktree hash>/<id>/:
 //   frames.bin   the JPEG frames, back to back
 //   index.jsonl  one line per event: {t, s, start|end|o+n, title?}; t is ms since the run began
-//   meta.json    written when the run ends; a run without one is still recording (or ccdb stopped mid-run)
+//   meta.json    written when the run ends; a run without one is still recording (or Gyro stopped mid-run)
 import { createHash } from 'node:crypto';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { DATA_DIR } from './data-dir.mjs';
 import { join } from 'node:path';
 
-const ROOT = join(homedir(), '.claude', 'ccdb', 'recordings');
+const ROOT = join(DATA_DIR, 'recordings');
 /** Recordings kept per worktree; older ones are deleted when a new one finishes. */
 const KEEP = 10;
 /** A run ends this long after its last page closes; a page opening sooner belongs to the same run. */
@@ -137,7 +137,7 @@ export async function listRecordings(path) {
     try {
       out.push(JSON.parse(await readFile(join(dir, 'meta.json'), 'utf8')));
     } catch {
-      // ccdb stopped mid-run: whatever reached the disk still plays back.
+      // Gyro stopped mid-run: whatever reached the disk still plays back.
       const idx = await recordingIndex(path, id);
       if (idx?.frames) out.push(await writeMeta(dir, id, idx.at, idx.ms, idx.frames, idx.bytes, idx.tests).catch(() => null));
     }

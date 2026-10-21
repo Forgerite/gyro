@@ -1,4 +1,4 @@
-// How ccdb launches claude: the executable, and an environment free of the launching session's markers.
+// How Gyro launches claude: the executable, and an environment free of the launching session's markers.
 
 export const CLAUDE = process.platform === 'win32' ? 'claude.exe' : 'claude';
 
@@ -13,7 +13,7 @@ const SESSION_MARKERS = new Set([
 
 export function childEnv() {
   const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
-  // If ccdb was launched from inside a Claude session, that session's markers are in our env. Passed on,
+  // If Gyro was launched from inside a Claude session, that session's markers are in our env. Passed on,
   // they make each dock claude think it's a child of that session (no transcript saving, wrong messaging
   // socket). Drop them; user settings like CLAUDE_CODE_USE_BEDROCK pass through untouched.
   for (const key of Object.keys(env)) {

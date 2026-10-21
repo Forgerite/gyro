@@ -14,7 +14,7 @@ const SCROLLBACK_CHARS = 512 * 1024;
 
 const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
-/** ccdb's own checkout: its dev script would fight the running dashboard for its ports. */
+/** Gyro's own checkout: its dev script would fight the running dashboard for its ports. */
 const SELF = norm(resolve(import.meta.dirname, '..'));
 
 /** norm(path) -> claude Term */

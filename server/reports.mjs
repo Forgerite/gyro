@@ -85,7 +85,7 @@ export async function serveReport(req, res) {
   const m = /^\/report\/([0-9a-f]{16})(\/[^?#]*)?/.exec(req.url);
   if (!m) return false;
   const dir = served.get(m[1]);
-  if (!dir) return (res.writeHead(404).end('Report not found; reopen it from ccdb'), true);
+  if (!dir) return (res.writeHead(404).end('Report not found; reopen it from Gyro'), true);
   if (!m[2]) return (res.writeHead(302, { location: `/report/${m[1]}/` }).end(), true);
   let rel;
   try { rel = decodeURIComponent(m[2]); } catch { return (res.writeHead(400).end(), true); }

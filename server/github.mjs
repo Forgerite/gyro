@@ -260,7 +260,7 @@ export async function prDetail(repo, number) {
 /** Merge states GitHub reports when nothing stands in the way. */
 const READY = new Set(['CLEAN', 'HAS_HOOKS']);
 
-/** Why PR `p` (from prDetail) can't be squash-merged from ccdb yet, or null when it can. */
+/** Why PR `p` (from prDetail) can't be squash-merged from Gyro yet, or null when it can. */
 export function whyNotMergeable(p) {
   if (p.state !== 'OPEN') return `PR #${p.number} is ${p.state.toLowerCase()}`;
   if (p.draft) return `PR #${p.number} is a draft`;

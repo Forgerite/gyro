@@ -1,4 +1,4 @@
-// ccdb backend: joins git worktrees with Claude Code sessions and serves them as JSON.
+// Gyro backend: joins git worktrees with Claude Code sessions and serves them as JSON.
 // The main thread only does HTTP, WebSockets and terminals; scanning lives in scanner.mjs (a worker).
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
@@ -19,11 +19,11 @@ import { attachPtySocket, closeShell, closeTerm, detectDev, findTerm, killAllTer
 import { resolvePorts } from '../scripts/worktree-ports.mjs';
 
 const ports = await resolvePorts();
-const PORT = Number(process.env.CCDB_PORT ?? ports.api);
-const CODE_ROOT = resolve(process.env.CCDB_ROOT ?? join(homedir(), 'Documents', 'code'));
+const PORT = Number(process.env.GYRO_PORT ?? ports.api);
+const CODE_ROOT = resolve(process.env.GYRO_ROOT ?? join(homedir(), 'Documents', 'code'));
 // Browsers send Origin on cross-site POSTs and WebSocket upgrades; anything else is refused.
 const ALLOWED_ORIGINS = new Set(
-  (process.env.CCDB_ORIGINS ?? `http://localhost:${ports.web},http://127.0.0.1:${ports.web}`).split(','),
+  (process.env.GYRO_ORIGINS ?? `http://localhost:${ports.web},http://127.0.0.1:${ports.web}`).split(','),
 );
 
 // ---------- workers ----------
@@ -290,7 +290,7 @@ async function openAction({ action, path, sessionId }) {
 const GYRO_EXAMPLES = ['task-management/tools/worktree-ports/worktree-ports.mjs', 'watson-hollow/scripts/worktree-ports.js', 'forgerite/scripts/worktree-ports.mjs'];
 
 /**
- * Start converting a project: ccdb checks git and archives orphaned sessions, makes a worktree for
+ * Start converting a project: Gyro checks git and archives orphaned sessions, makes a worktree for
  * the work, and starts claude there on the brief. Pressing it again while a run's session is still
  * open just returns that worktree.
  */
@@ -314,7 +314,7 @@ async function convertToGyro(path) {
   done.push({
     step: 'prune',
     detail: pruned.archived.length
-      ? `Archived ${pruned.archived.length} orphaned session${pruned.archived.length === 1 ? '' : 's'} (their worktrees are gone) to ~/.claude/ccdb-archive`
+      ? `Archived ${pruned.archived.length} orphaned session${pruned.archived.length === 1 ? '' : 's'} (their worktrees are gone) to ~/.claude/gyro-archive`
       : 'No orphaned sessions',
   });
 
@@ -334,7 +334,7 @@ async function convertToGyro(path) {
     .filter((p) => existsSync(p) && !norm(p).startsWith(norm(ws.path) + '/'))
     .map((p) => p.replace(/\\/g, '/'));
   const prompt = gyroBrief({
-    project: ws, worktree, branch, ccdbUrl: `http://127.0.0.1:${PORT}`,
+    project: ws, worktree, branch, gyroUrl: `http://127.0.0.1:${PORT}`,
     done: done.map((d) => d.detail), examples, dev: ws.dev,
   });
   // No dev server yet: working out the right one is the session's first step.
@@ -349,7 +349,7 @@ async function gyroReport({ path, step, status, detail: note, devCommand, done, 
   let p = typeof path === 'string' ? path : '';
   let target = null;
   for (let i = 0; i < 12 && p && !target; i++, p = p.replace(/[\\/][^\\/]*$/, '')) target = await knownTarget(p);
-  if (!target) throw httpError(404, 'Not inside a project ccdb knows');
+  if (!target) throw httpError(404, 'Not inside a project Gyro knows');
   const repo = target.repo ?? target.path;
   if (step !== undefined) {
     if (devCommand !== undefined) {
@@ -499,15 +499,15 @@ const server = createServer(async (req, res) => {
       const path = new URL(req.url, 'http://localhost').searchParams.get('path');
       return send(res, 200, await teardownPlan(path));
     }
-    // Playwright reports are served on their own origin (127.0.0.1, not the dashboard's), so their scripts can't reach ccdb's page.
+    // Playwright reports are served on their own origin (127.0.0.1, not the dashboard's), so their scripts can't reach Gyro's page.
     if ((req.method === 'GET' || req.method === 'HEAD') && req.url.startsWith('/report/') && (await serveReport(req, res))) return;
     if (req.method === 'GET' && req.url.startsWith('/api/ports?')) {
-      // For a repo's own scripts started outside ccdb: the port block of the worktree holding `path`
+      // For a repo's own scripts started outside Gyro: the port block of the worktree holding `path`
       // (any folder inside it), leased now if it has none. 404 for folders that aren't in a worktree.
       let p = new URL(req.url, 'http://localhost').searchParams.get('path') ?? '';
       let wt = null;
       for (let i = 0; i < 12 && p && !wt; i++, p = p.replace(/[\\/][^\\/]*$/, '')) wt = await knownTarget(p);
-      if (!wt) return send(res, 404, { error: 'Not inside a worktree ccdb knows' });
+      if (!wt) return send(res, 404, { error: 'Not inside a worktree Gyro knows' });
       return send(res, 200, { path: wt.path, ...leasePorts(wt.path) });
     }
     if (req.method === 'GET' && req.url.startsWith('/api/reports?')) {
@@ -735,7 +735,7 @@ const server = createServer(async (req, res) => {
             ['git', 'done', 'Created with the project'],
             ['prune', 'done', 'New project: no sessions'],
             ['lease', 'done', 'ports.mjs from the Gyro template'],
-            ['ccdb', 'done', 'ports.mjs reads CCDB_PORT_BASE, then a running Gyro; CLAUDE.md has the Ports section'],
+            ['gyro', 'done', 'ports.mjs reads GYRO_PORT_BASE, then a running Gyro; CLAUDE.md has the Ports section'],
           ], 'Created as a Gyro project.');
           return send(res, 200, result);
         }
@@ -768,7 +768,7 @@ server.on('upgrade', (req, socket) => {
   if (!SOCKETS.has(new URL(req.url, 'http://localhost').pathname)) socket.destroy();
 });
 loadExcludedPorts();
-server.listen(PORT, '127.0.0.1', () => console.log(`ccdb api on http://127.0.0.1:${PORT} (root ${CODE_ROOT})`));
+server.listen(PORT, '127.0.0.1', () => console.log(`Gyro api on http://127.0.0.1:${PORT} (root ${CODE_ROOT})`));
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => (killAllTerms(), process.exit(0)));
 // node-pty's Windows agent throws from async callbacks; one bad terminal shouldn't take the dashboard down.
 process.on('uncaughtException', (e) => console.error('[uncaught]', e));

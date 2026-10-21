@@ -1,8 +1,8 @@
-// Per-worktree ports. Every service ccdb starts locally gets its port from here, so
-// several worktrees can run their own ccdb side by side.
+// Per-worktree ports. Every service Gyro starts locally gets its port from here, so
+// several worktrees can run their own Gyro side by side.
 //
 // Ports come from, in order:
-//   1. CCDB_PORT_BASE in the environment (Gyro sets it for everything it starts);
+//   1. GYRO_PORT_BASE in the environment (Gyro sets it for everything it starts);
 //   2. a running Gyro: GET http://127.0.0.1:4317/api/ports?path=<git toplevel>;
 //   3. the historic fixed ports (4200 web, 4317 api), so machines without Gyro are unchanged.
 // Each service sits at a fixed offset inside the leased block (0 = what the dev command serves).
@@ -50,7 +50,7 @@ async function leaseFromGyro() {
 
 /** Resolve every service's port: { web, api }. */
 export async function resolvePorts(env = process.env) {
-  const envBase = Number(env.CCDB_PORT_BASE);
+  const envBase = Number(env.GYRO_PORT_BASE ?? env.CCDB_PORT_BASE);
   if (Number.isInteger(envBase) && envBase > 0) return fromBase(envBase);
   const base = await leaseFromGyro();
   return base == null ? { ...FALLBACK } : fromBase(base);
@@ -59,7 +59,7 @@ export async function resolvePorts(env = process.env) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const ports = await resolvePorts();
   if (process.argv.includes('--env')) {
-    for (const [k, v] of Object.entries(ports)) console.log(`CCDB_${k.toUpperCase()}_PORT=${v}`);
+    for (const [k, v] of Object.entries(ports)) console.log(`GYRO_${k.toUpperCase()}_PORT=${v}`);
   } else {
     console.log(JSON.stringify(ports));
   }

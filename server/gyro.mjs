@@ -1,28 +1,27 @@
-// Gyro conversion: bring a project onto ccdb's conventions (dev command, git, no orphaned sessions,
-// per-worktree port leases wired into ccdb's machine-wide blocks). ccdb does the mechanical steps;
+// Gyro conversion: bring a project onto Gyro's conventions (dev command, git, no orphaned sessions,
+// per-worktree port leases wired into Gyro's machine-wide blocks). Gyro does the mechanical steps;
 // a Claude session does the rest in a worktree made for it and reports each step back here.
-// Progress lives in SQLite (~/.claude/ccdb/ccdb.db) so it outlasts restarts and terminals.
+// Progress lives in SQLite (~/.claude/gyro/gyro.db) so it outlasts restarts and terminals.
 import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { DATA_DIR } from './data-dir.mjs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const DIR = join(homedir(), '.claude', 'ccdb');
 const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
 /** In the order the conversion does them. `by`: who does it. */
 export const GYRO_STEPS = [
   { key: 'dev', label: 'Dev command', by: 'claude' },
-  { key: 'git', label: 'Git repository', by: 'ccdb' },
-  { key: 'prune', label: 'Orphaned sessions', by: 'ccdb' },
+  { key: 'git', label: 'Git repository', by: 'gyro' },
+  { key: 'prune', label: 'Orphaned sessions', by: 'gyro' },
   { key: 'lease', label: 'Port leasing', by: 'claude' },
-  { key: 'ccdb', label: 'Wired into ccdb ports', by: 'claude' },
+  { key: 'gyro', label: 'Wired into Gyro ports', by: 'claude' },
 ];
 const STEP_KEYS = new Set(GYRO_STEPS.map((s) => s.key));
 const STEP_STATUS = new Set(['done', 'skipped', 'failed']);
 
-mkdirSync(DIR, { recursive: true });
-const db = new DatabaseSync(join(DIR, 'ccdb.db'));
+mkdirSync(DATA_DIR, { recursive: true });
+const db = new DatabaseSync(join(DATA_DIR, 'gyro.db'));
 db.exec(`
   CREATE TABLE IF NOT EXISTS gyro_projects (
     key TEXT PRIMARY KEY,          -- normalized project path
@@ -46,6 +45,8 @@ db.exec(`
 `);
 // Databases from before `changed` existed.
 if (!db.prepare('PRAGMA table_info(gyro_projects)').all().some((c) => c.name === 'changed')) db.exec('ALTER TABLE gyro_projects ADD COLUMN changed INTEGER');
+// The "gyro" step was called "ccdb" before the rename.
+db.exec("UPDATE gyro_steps SET step = 'gyro' WHERE step = 'ccdb'");
 
 const q = {
   project: db.prepare('SELECT * FROM gyro_projects WHERE key = ?'),
@@ -99,6 +100,7 @@ export function startGyro(path, { worktree, sessionId }) {
 }
 
 export function reportStep(path, step, status, detail) {
+  if (step === 'ccdb') step = 'gyro'; // sessions briefed before the rename
   if (!STEP_KEYS.has(step)) throw Object.assign(new Error(`unknown step; use one of ${[...STEP_KEYS].join(', ')}`), { status: 400 });
   if (!STEP_STATUS.has(status)) throw Object.assign(new Error('status must be done, skipped or failed'), { status: 400 });
   if (!q.project.get(norm(path))) throw Object.assign(new Error('No Gyro conversion is running for this project'), { status: 409 });
@@ -116,7 +118,7 @@ export function finishGyro(path, ok, summary, changed) {
   return gyroOf(path);
 }
 
-/** A conversion ccdb completed itself, with no session: a project created as a Gyro project. */
+/** A conversion Gyro completed itself, with no session: a project created as a Gyro project. */
 export function recordGyro(path, steps, summary) {
   const key = norm(path);
   const now = Date.now();
@@ -126,17 +128,17 @@ export function recordGyro(path, steps, summary) {
   q.finish.run('done', now, summary, 1, key);
 }
 
-/** Append a sentence to the run's summary (e.g. what ccdb did after it finished). */
+/** Append a sentence to the run's summary (e.g. what Gyro did after it finished). */
 export function noteGyro(path, text) {
   q.note.run(text, norm(path));
 }
 
 /** The first message of the conversion session. */
-export function gyroBrief({ project, worktree, branch, ccdbUrl, done, examples, dev }) {
-  const report = (body) => `curl -s -X POST ${ccdbUrl}/api/gyro/report -H "content-type: application/json" -d '${JSON.stringify({ path: worktree.replace(/\\/g, '/'), ...body })}'`;
+export function gyroBrief({ project, worktree, branch, gyroUrl, done, examples, dev }) {
+  const report = (body) => `curl -s -X POST ${gyroUrl}/api/gyro/report -H "content-type: application/json" -d '${JSON.stringify({ path: worktree.replace(/\\/g, '/'), ...body })}'`;
   return `Convert ${project.name} into a Gyro project.
 
-Gyro (ccdb, running at ${ccdbUrl}) is the dashboard that runs Claude sessions and dev servers for every git worktree on this machine. A Gyro project runs side by side in any number of worktrees without port collisions.
+Gyro (running at ${gyroUrl}) is the dashboard that runs Claude sessions and dev servers for every git worktree on this machine. A Gyro project runs side by side in any number of worktrees without port collisions.
 
 ${branch ? `You're in ${worktree}, a worktree on branch \`${branch}\` made for this conversion. Make all changes here, not in the main checkout (${project.path}), and commit here at the end.` : `This repository has no commits yet, so you're in the main checkout (${worktree}). Don't commit; leave the changes for review.`}
 
@@ -154,14 +156,14 @@ Do the steps in order. After each one, report it to Gyro with status "done", "sk
 ${examples.map((e) => `   - ${e}`).join('\n')}
    That means: one table naming each service and its port, a resolver everything imports, and a small CLI or env-file writer for tools that can't import JavaScript (docker compose, .env files, shell scripts). Then route every hardcoded port through it: listen() calls, the Vite or Angular dev server config (with strictPort, so a taken port fails loudly instead of drifting to the next one), dev proxies, Playwright config and baseURL, e2e fixtures, .env files and compose files. Search the repo for port numbers and localhost URLs to find them all.
 
-3. Gyro's ports (step "ccdb"). Gyro leases each worktree a block of 100 ports, unique across every project on this machine, and puts it in the environment of everything it starts there: CCDB_PORT_BASE (first port), CCDB_PORT_COUNT (100) and CCDB_PORT_SLOT; the dev server also gets PORT, equal to CCDB_PORT_BASE. Your shell has them now. The resolver takes its ports from, in order:
-   a. CCDB_PORT_BASE in the environment;
-   b. a running Gyro: GET ${ccdbUrl}/api/ports?path=<the worktree's git toplevel> returns {"base","count","slot"} (404 for folders Gyro doesn't know; give up after about 1.5 s);
+3. Gyro's ports (step "gyro"). Gyro leases each worktree a block of 100 ports, unique across every project on this machine, and puts it in the environment of everything it starts there: GYRO_PORT_BASE (first port), GYRO_PORT_COUNT (100) and GYRO_PORT_SLOT; the dev server also gets PORT, equal to GYRO_PORT_BASE. Your shell has them now. Gyro also sets them under their old names (CCDB_PORT_*), so a resolver that reads CCDB_PORT_BASE still works; use the GYRO_ names in anything you write. The resolver takes its ports from, in order:
+   a. GYRO_PORT_BASE in the environment (or the older CCDB_PORT_BASE);
+   b. a running Gyro: GET ${gyroUrl}/api/ports?path=<the worktree's git toplevel> returns {"base","count","slot"} (404 for folders Gyro doesn't know; give up after about 1.5 s);
    c. what the project did before (its own slot registry, or today's fixed ports), so CI and machines without Gyro keep working unchanged.
    If the resolver already does all of that, this step is already in place; check the CLAUDE.md note too. Inside the block each service has a fixed offset: 0 is the main app the dev command serves (the preview shows it), 1–49 other dev services, 50–99 test and e2e services.
    Add a short "Ports" section to the project's CLAUDE.md (create the file if there isn't one): the variables, the offset table, and how scripts get their ports.
 
-4. Verify. Run the dev command here and check the app answers on CCDB_PORT_BASE, and that its other services use their offsets. If you changed code, also run the unit tests, and the e2e suite if it's reasonably quick. Stop everything you started.
+4. Verify. Run the dev command here and check the app answers on GYRO_PORT_BASE, and that its other services use their offsets. If you changed code, also run the unit tests, and the e2e suite if it's reasonably quick. Stop everything you started.
 
 5. ${branch ? 'If you changed anything, commit it on this branch with a clear message. Then report' : 'Report'} that you've finished, with two or three sentences on what changed and anything left to do. Set "changed" to false if you changed nothing in the repo${branch ? ' (Gyro then removes this worktree and its branch once you go idle)' : ''}:
   ${report({ done: true, changed: true, summary: '...' })}

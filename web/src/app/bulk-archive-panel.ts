@@ -32,7 +32,7 @@ export interface PickedSession {
 
     <div class="primary">
       @if (confirming()) {
-        <span class="note">Move {{ archivable().length }} session{{ archivable().length === 1 ? '' : 's' }} to ~/.claude/ccdb-archive?</span>
+        <span class="note">Move {{ archivable().length }} session{{ archivable().length === 1 ? '' : 's' }} to ~/.claude/gyro-archive?</span>
         <button type="button" class="arch-btn danger" (click)="archive()" [disabled]="busy()">
           {{ busy() ? 'Archiving…' : 'Archive ' + archivable().length }}
         </button>

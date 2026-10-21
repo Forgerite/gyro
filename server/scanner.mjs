@@ -460,7 +460,8 @@ function touch(path) {
   worktreeCache.at = 0; // next snapshot triggers a background scan
 }
 
-const ARCHIVE_DIR = join(CLAUDE_DIR, 'ccdb-archive');
+// Same folder as data-dir.mjs's ARCHIVE_DIR (this runs in a worker, which mustn't run its migration).
+const ARCHIVE_DIR = join(CLAUDE_DIR, 'gyro-archive');
 
 /**
  * Archive sessions by id, for a worktree that may already be gone (teardown removes it first).

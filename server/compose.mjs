@@ -1,5 +1,5 @@
 // Smart feature: "Compose commit". Headless claude reads the staged changes, writes the message
-// and commits. Runs in the detail worker; ccdb then checks the commit is exactly what was staged.
+// and commits. Runs in the detail worker; Gyro then checks the commit is exactly what was staged.
 import { git, gitOk, runClaude, tryGit, whyFailed, withLock } from './smart.mjs';
 
 const TIMEOUT_MS = 4 * 60_000;

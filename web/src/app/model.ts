@@ -52,7 +52,7 @@ export interface Worktree {
   git: GitStatus;
   /** The open GitHub PR from this branch (linked projects only). */
   pr?: PullRequest | null;
-  /** Its port block, once ccdb has run something here (see server/ports.mjs). */
+  /** Its port block, once Gyro has run something here (see server/ports.mjs). */
   ports?: PortBlock | null;
   sessions: Session[];
   lastActivity: number;
@@ -87,10 +87,10 @@ export interface Workspace {
 export type GyroStepStatus = 'pending' | 'done' | 'skipped' | 'failed';
 
 export interface GyroStep {
-  key: 'dev' | 'git' | 'prune' | 'lease' | 'ccdb';
+  key: 'dev' | 'git' | 'prune' | 'lease' | 'gyro';
   label: string;
-  /** Who does it: ccdb itself before the session starts, or the Claude session. */
-  by: 'ccdb' | 'claude';
+  /** Who does it: Gyro itself before the session starts, or the Claude session. */
+  by: 'gyro' | 'claude';
   status: GyroStepStatus;
   detail: string | null;
   at: number | null;
@@ -110,7 +110,7 @@ export interface GyroRun {
   steps: GyroStep[];
 }
 
-/** A project's dev command: set in ccdb (`''` for none), else detected from package.json. */
+/** A project's dev command: set in Gyro (`''` for none), else detected from package.json. */
 export interface DevSetting {
   command: string | null;
   detected: string | null;

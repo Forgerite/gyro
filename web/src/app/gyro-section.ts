@@ -20,7 +20,7 @@ const MARK: Record<GyroStepStatus, string> = { done: '✓', skipped: '–', fail
           <li>
             @if (orphans()) {
               archives {{ orphans() }}{{ orphansCapped() ? '+' : '' }} orphaned session{{ orphans() === 1 ? '' : 's' }} whose worktrees are gone
-              (moved to <code>~/.claude/ccdb-archive</code>, so they can be restored)
+              (moved to <code>~/.claude/gyro-archive</code>, so they can be restored)
             } @else {
               archives orphaned sessions (none right now)
             }

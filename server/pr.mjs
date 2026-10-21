@@ -1,6 +1,6 @@
-// Smart feature: "Create PR". ccdb pushes the branch, then headless claude reads its commits, writes
+// Smart feature: "Create PR". Gyro pushes the branch, then headless claude reads its commits, writes
 // the title and description (linking the project issue it addresses, when there is one) and runs
-// `gh pr create`. ccdb then asks GitHub whether the PR exists.
+// `gh pr create`. Gyro then asks GitHub whether the PR exists.
 import { prForBranch } from './github.mjs';
 import { git, runClaude, tryGit, whyFailed, withLock } from './smart.mjs';
 
@@ -45,7 +45,7 @@ function prompt({ repo, branch, base, remoteBase, project, issues }) {
 }
 
 /**
- * Create a PR for `path`'s branch. `push(path)` publishes the branch first (ccdb's own push).
+ * Create a PR for `path`'s branch. `push(path)` publishes the branch first (Gyro's own push).
  * Resolves with the new PR, or throws with why there isn't one.
  */
 export function createPr({ path, repo, base, project, issues = [] }, push) {

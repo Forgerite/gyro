@@ -16,7 +16,7 @@ const { result } = concurrently(
       command: `npm start --prefix web -- --port ${ports.web}`,
       name: 'web',
       prefixColor: 'cyan',
-      env: { CCDB_API_PORT: String(ports.api) },
+      env: { GYRO_API_PORT: String(ports.api) },
     },
   ],
   { killOthersOn: ['failure', 'success'] },

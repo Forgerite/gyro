@@ -2,7 +2,7 @@ import { Component, computed, effect, inject, input, signal } from '@angular/cor
 import { DashboardService } from './dashboard.service';
 import { Worktree } from './model';
 
-/** Auto rebase progress, then its outcome: Claude's summary plus anything ccdb's own checks flagged. */
+/** Auto rebase progress, then its outcome: Claude's summary plus anything Gyro's own checks flagged. */
 @Component({
   selector: 'app-rebase-status',
   template: `

@@ -13,7 +13,7 @@ export interface LiveStream {
 const LINGER_MS = 2500;
 
 /**
- * The pages a Playwright run in one worktree is drawing right now, streamed from ccdb's API (the
+ * The pages a Playwright run in one worktree is drawing right now, streamed from Gyro's API (the
  * run's workers send them there; see server/pw-live-hook.cjs). Watches one worktree at a time.
  */
 export class LiveRun {
