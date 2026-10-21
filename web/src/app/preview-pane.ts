@@ -31,9 +31,21 @@ export interface PreviewTab {
                 [attr.aria-label]="live.running() ? 'Tests (running)' : null">Tests@if (live.running()) {<span class="live-dot" aria-hidden="true"></span>}</button>
       </div>
     </ng-template>
+    <ng-template #full>
+      <button type="button" class="full-btn" (click)="api.previewFull.set(!api.previewFull())" [attr.aria-pressed]="api.previewFull()"
+              [title]="api.previewFull() ? 'Restore the other panels (Esc)' : 'Fill the dashboard with the preview'"
+              [attr.aria-label]="api.previewFull() ? 'Exit full view' : 'Full view'">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          @if (api.previewFull()) { <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" /> } @else { <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" /> }
+        </svg>
+      </button>
+    </ng-template>
 
     @if (view() === 'tests' && active(); as path) {
-      <app-test-report [path]="path" [live]="live"><ng-container [ngTemplateOutlet]="views" /></app-test-report>
+      <app-test-report [path]="path" [live]="live">
+        <ng-container [ngTemplateOutlet]="views" />
+        <ng-container ngProjectAs="[end]" [ngTemplateOutlet]="full" />
+      </app-test-report>
     } @else {
       <div class="bar">
         <ng-container [ngTemplateOutlet]="views" />
@@ -45,6 +57,7 @@ export interface PreviewTab {
         @if (current(); as c) {
           <a [href]="c.url" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open preview in a new tab">↗</a>
         }
+        <ng-container [ngTemplateOutlet]="full" />
       </div>
     }
     <!-- The app pages stay loaded while the tests are shown, so switching back keeps their state. -->
@@ -64,6 +77,7 @@ export interface PreviewTab {
     </div>
   `,
   styleUrl: './preview-pane.css',
+  host: { '[class.full]': 'api.previewFull()' },
 })
 export class PreviewPane {
   readonly tabs = input.required<PreviewTab[]>();

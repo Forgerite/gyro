@@ -70,9 +70,13 @@ export class DashboardService {
   readonly dockOpen = signal(load(DOCK_OPEN_KEY) !== 'false');
 
   setDockOpen(open: boolean): void {
+    if (!open) this.previewFull.set(false);
     this.dockOpen.set(open);
     save(DOCK_OPEN_KEY, String(open));
   }
+
+  /** The preview pane covers the whole dashboard (not the browser's own full screen). */
+  readonly previewFull = signal(false);
 
   /** The quick layout the dividers were last set to; null once one is dragged by hand. */
   readonly quickLayout = signal<QuickLayout | null>(loadQuickLayout());

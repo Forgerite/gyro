@@ -243,6 +243,7 @@ export class TerminalDock {
   protected readonly round = Math.round;
 
   protected togglePreview(): void {
+    if (this.previewOn()) this.api.previewFull.set(false);
     this.previewOn.update((on) => !on);
     save(PREVIEW_KEY, String(this.previewOn()));
   }

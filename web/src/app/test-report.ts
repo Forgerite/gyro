@@ -62,6 +62,7 @@ const POLL_MS = 5000;
           <span class="spacer"></span>
         }
       }
+      <ng-content select="[end]" />
     </div>
     <div class="frames">
       @if (showLive()) {

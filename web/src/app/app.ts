@@ -317,6 +317,7 @@ export class App {
   /** Set all three dividers so one quadrant gets most of the screen; the others stay usable. */
   protected applyLayout(layout: QuickLayout) {
     const { innerWidth: w, innerHeight: h } = window;
+    this.api.previewFull.set(false);
     this.detailWide.set(false);
     if (layout === 'tiles' || layout === 'detail') {
       this.detailWidth.set(clampDetail(w * (layout === 'detail' ? FOCUS_SHARE : 1 - FOCUS_SHARE)));
@@ -410,6 +411,11 @@ export class App {
     const quick = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && QUICK_LAYOUTS.find((l) => l.key === e.code);
     if (quick) {
       this.applyLayout(quick.id);
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Escape' && this.api.previewFull()) {
+      this.api.previewFull.set(false);
       e.preventDefault();
       return;
     }

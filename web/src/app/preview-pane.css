@@ -150,3 +150,9 @@ app-recording-player { position: absolute; inset: 0; display: flex; flex-directi
 /* Where each test starts. */
 .mark { position: absolute; top: -3px; width: 2px; height: 6px; margin-left: -1px; border-radius: 1px; background: var(--muted); pointer-events: none; }
 .time { font-size: 11px; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; margin: 0 4px; }
+
+/* Full view: the pane covers the whole dashboard. Fixed, not moved, so the page in the frame keeps its state. */
+:host(.full) { position: fixed; inset: 0; z-index: 10; }
+.full-btn { display: inline-flex; align-items: center; }
+.full-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.bar .full-btn[aria-pressed='true'] { color: var(--accent); }
