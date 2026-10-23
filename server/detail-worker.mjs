@@ -2,7 +2,7 @@
 // worktree and passes it in (with its trunk), so this never waits on the scanner.
 import { parentPort } from 'node:worker_threads';
 import { gitDetail } from './gitdetail.mjs';
-import { createProject, projectCandidates } from './projects.mjs';
+import { checkProject, createProject, projectCandidates } from './projects.mjs';
 import { composeCommit } from './compose.mjs';
 import { autoRebase } from './rebase.mjs';
 import { createPr } from './pr.mjs';
@@ -13,7 +13,7 @@ const detail = gitDetail(async (wt) => wt);
 const pushBranch = (path) => detail.gitAction({ path: { path, git: {} }, action: 'push' });
 
 const ops = {
-  ...detail, createProject, projectCandidates, composeCommit, autoRebase, createWorktree, worktreeBases,
+  ...detail, checkProject, createProject, projectCandidates, composeCommit, autoRebase, createWorktree, worktreeBases,
   createPr: (arg) => createPr(arg, pushBranch),
 };
 

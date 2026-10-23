@@ -24,7 +24,20 @@ export interface Created {
 /** Same rule the server enforces: a plain folder name, not hidden, not a worktree home. */
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-/** Start a git repo in the code folder: a brand-new folder, or an existing folder that isn't a repo yet. */
+/** The GitHub owner picked last time, so a new project defaults to it. */
+const LAST_OWNER = 'gyro.newProject.githubOwner';
+function readLastOwner(): string | null {
+  try {
+    return localStorage.getItem(LAST_OWNER);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Start a git repo in the code folder: a brand-new folder, or an existing folder that isn't a repo yet.
+ * Optionally on GitHub too: a new repo, with main pushed first so it's the default branch.
+ */
 @Component({
   selector: 'app-new-project-panel',
   imports: [AgoPipe, FormField],
@@ -100,6 +113,32 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
           </span>
         </span>
       </label>
+      <label class="check" [class.dim]="!hasOwners()">
+        <input type="checkbox" [checked]="useGithub()" [disabled]="!hasOwners()" (change)="githubOn.set($any($event.target).checked)" />
+        <span>
+          Create a GitHub repo
+          <span class="muted">
+            @if (owners() === null) { (checking gh…) }
+            @else if (!hasOwners()) { ({{ ownersError() ?? 'no GitHub account found' }}) }
+            @else { (and push main to it, so main is the default branch PRs go into) }
+          </span>
+        </span>
+      </label>
+      @if (useGithub()) {
+        <div class="gh">
+          <select aria-label="GitHub owner" (change)="pickOwner($any($event.target).value)">
+            @for (o of owners(); track o) { <option [value]="o" [selected]="o === owner()">{{ o }}</option> }
+          </select>
+          <span class="repo" [title]="'github.com/' + owner() + '/' + (repoName() || '…')">/ {{ repoName() || '…' }}</span>
+          <div class="vis" role="radiogroup" aria-label="Repository visibility">
+            <label><input type="radio" name="np-vis" [checked]="isPrivate()" (change)="isPrivate.set(true)" />Private</label>
+            <label><input type="radio" name="np-vis" [checked]="!isPrivate()" (change)="isPrivate.set(false)" />Public</label>
+          </div>
+        </div>
+        @if (mode() === 'directory') {
+          <p class="help">Its files aren't committed yet, so main is pushed after its first commit, before the first session starts.</p>
+        }
+      }
       @if (warnNodeModules()) {
         <p class="warn" role="status">This folder has node_modules. Keep the .gitignore on, or thousands of files will show as changes.</p>
       }
@@ -161,6 +200,16 @@ export class NewProjectPanel {
     return this.mode() === 'directory' && !!c?.nodeModules && !c.gitignore && !this.gitignore();
   });
 
+  // --- GitHub: who can own the new repo (from gh), which one, and its visibility.
+  protected readonly owners = signal<string[] | null>(null);
+  protected readonly ownersError = signal<string | null>(null);
+  protected readonly hasOwners = computed(() => !!this.owners()?.length);
+  protected readonly githubOn = signal(true);
+  protected readonly useGithub = computed(() => this.githubOn() && this.hasOwners());
+  protected readonly owner = signal('');
+  protected readonly isPrivate = signal(true);
+  protected readonly repoName = computed(() => (this.mode() === 'scratch' ? this.nameForm.name().value().trim() : (this.picked() ?? '')));
+
   protected readonly canCreate = computed(() => {
     if (this.busy()) return false;
     return this.mode() === 'scratch' ? this.nameForm.name().valid() : !!this.pickedCandidate();
@@ -168,6 +217,7 @@ export class NewProjectPanel {
 
   constructor() {
     this.loadCandidates();
+    this.loadOwners();
     requestAnimationFrame(() => this.nameInput()?.nativeElement.focus());
   }
 
@@ -187,13 +237,38 @@ export class NewProjectPanel {
     });
   }
 
+  private loadOwners() {
+    this.http.get<{ owners: string[]; error: string | null }>('/api/github/owners').subscribe({
+      next: ({ owners, error }) => {
+        const last = readLastOwner();
+        this.owner.set(last && owners.includes(last) ? last : (owners[0] ?? ''));
+        this.ownersError.set(error);
+        this.owners.set(owners);
+      },
+      error: (e) => {
+        this.ownersError.set(e.error?.error ?? e.message);
+        this.owners.set([]);
+      },
+    });
+  }
+
+  protected pickOwner(owner: string) {
+    this.owner.set(owner);
+    try {
+      localStorage.setItem(LAST_OWNER, owner);
+    } catch {
+      // storage blocked: the first owner is the default again next time
+    }
+  }
+
   protected create() {
     if (!this.canCreate()) return;
     const mode = this.mode();
     const name = mode === 'scratch' ? this.nameForm.name().value().trim() : this.picked()!;
     this.busy.set(true);
     this.error.set(null);
-    const body = { mode, name, gitignore: this.gitignore(), gyro: this.gyro() };
+    const github = this.useGithub() ? { owner: this.owner(), private: this.isPrivate() } : null;
+    const body = { mode, name, gitignore: this.gitignore(), gyro: this.gyro(), github };
     this.http.post<{ path: string; notes: string[]; worktree?: string; terms?: Term[] }>('/api/projects/create', body).subscribe({
       next: ({ path, worktree, terms }) => {
         this.busy.set(false);

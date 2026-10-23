@@ -77,20 +77,12 @@ export async function projectCandidates(codeRoot) {
   return out.filter(Boolean).sort((a, b) => b.modifiedAt - a.modifiedAt);
 }
 
-/**
- * scratch: new folder, git init, optional .gitignore, and an initial commit so the branch exists.
- * directory: git init in an existing folder (plus .gitignore if asked); its files stay uncommitted
- * so they can be reviewed and committed from the Git tab.
- * gyro (scratch only): start it as a Gyro project, with ports.mjs and CLAUDE.md in the first commit.
- */
-export async function createProject({ codeRoot, mode, name, gitignore, gyro }) {
+/** Throws if `name` can't become a project in `mode`; run before anything is created (on GitHub too). */
+export async function checkProject({ codeRoot, mode, name }) {
   checkName(name);
   const path = join(codeRoot, name);
-  const notes = [];
-
   if (mode === 'scratch') {
     if (existsSync(path)) throw new Error(`${name} already exists in the code folder`);
-    await mkdir(path);
   } else if (mode === 'directory') {
     const st = await stat(path).catch(() => null);
     if (!st?.isDirectory()) throw new Error(`${name} isn't a folder in the code folder`);
@@ -98,6 +90,22 @@ export async function createProject({ codeRoot, mode, name, gitignore, gyro }) {
   } else {
     throw new Error('unknown mode');
   }
+  return { path };
+}
+
+/**
+ * scratch: new folder, git init, optional .gitignore, and an initial commit so the branch exists.
+ * directory: git init in an existing folder (plus .gitignore if asked); its files stay uncommitted
+ * so they can be reviewed and committed from the Git tab.
+ * gyro (scratch only): start it as a Gyro project, with ports.mjs and CLAUDE.md in the first commit.
+ * remote: a new, empty GitHub repo's URL, added as origin. main is pushed to it straight away when it
+ * has a commit, so it becomes the repo's default branch before any session branch can get there.
+ */
+export async function createProject({ codeRoot, mode, name, gitignore, gyro, remote }) {
+  const { path } = await checkProject({ codeRoot, mode, name });
+  const notes = [];
+
+  if (mode === 'scratch') await mkdir(path);
 
   await git(path, 'init', '-q', '-b', 'main');
   const ignoreFile = join(path, '.gitignore');
@@ -117,5 +125,26 @@ export async function createProject({ codeRoot, mode, name, gitignore, gyro }) {
       notes.push(`Created, but the initial commit failed: ${e.message}`);
     }
   }
+  if (remote) notes.push(...(await connectRemote(path, remote)));
   return { path, notes };
+}
+
+/** Add `url` as origin and push main to it if main has a commit (a converted folder's doesn't yet). */
+async function connectRemote(path, url) {
+  try {
+    await git(path, 'remote', 'add', 'origin', url);
+  } catch (e) {
+    return [`Couldn't add the GitHub repo as origin: ${e.message}`];
+  }
+  const born = await git(path, 'rev-parse', '--verify', '-q', 'refs/heads/main').then(() => true, () => false);
+  if (!born) return ['Added the GitHub repo as origin; main is pushed before the first session once it has a commit'];
+  try {
+    await exec('git', ['push', '-q', '--set-upstream', 'origin', 'refs/heads/main:refs/heads/main'], {
+      cwd: path, windowsHide: true, timeout: 120_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    });
+    return ['Pushed main to the new GitHub repo'];
+  } catch (e) {
+    const why = (e.stderr || e.message || '').trim().split('\n').pop();
+    return [`Added the GitHub repo as origin, but pushing main failed (${why}); it's pushed before the first session`];
+  }
 }

@@ -34,7 +34,7 @@ export async function worktreeBases({ repo, trunk }) {
 /** Where a repo's worktrees go: beside it, in <repo>.worktrees/ (the layout the other worktrees here use). */
 export const worktreeHome = (repo) => join(dirname(repo), `${basename(repo)}.worktrees`);
 
-/** Create <repo>.worktrees/<name> on a new branch <name>, started from `base`. Returns its path. */
+/** Create <repo>.worktrees/<name> on a new branch <name>, started from `base`. Returns its path (and a note if it pushed the trunk). */
 export async function createWorktree({ repo, name, base }) {
   if (!NAME.test(name ?? '') || name.endsWith('.') || name.endsWith('.lock') || name.includes('..')) {
     throw new Error('Use letters, numbers, dot, dash or underscore (starting with a letter or number)');
@@ -51,8 +51,34 @@ export async function createWorktree({ repo, name, base }) {
   const remote = (await git(repo, 'remote')).split('\n').filter(Boolean).find((r) => base.startsWith(`${r}/`));
   if (remote) await git(repo, 'fetch', remote, base.slice(remote.length + 1)).catch(() => {}); // offline: use what we have
 
+  const note = await publishTrunk(repo);
   await mkdir(home, { recursive: true });
   // --no-track: the new branch isn't the base's; it gets its own upstream when it's first pushed.
   await git(repo, 'worktree', 'add', '--no-track', '-b', name, path, base);
-  return { path };
+  return { path, note };
+}
+
+/**
+ * GitHub makes the first branch pushed to an empty repo its default, and PRs go there. So before a
+ * session starts, push the trunk to a remote that has no branches yet. Never blocks the session:
+ * offline or refused, it's skipped. Returns a note when it pushed.
+ */
+async function publishTrunk(repo) {
+  try {
+    const remotes = (await git(repo, 'remote')).split(/\r?\n/).filter(Boolean);
+    const remote = remotes.includes('origin') ? 'origin' : remotes.length === 1 ? remotes[0] : null;
+    if (!remote) return null;
+    // Anything fetched from it means it has branches already; only an untouched remote needs asking.
+    if ((await git(repo, 'for-each-ref', '--count=1', '--format=%(refname)', `refs/remotes/${remote}/`)).trim()) return null;
+    const heads = (await git(repo, 'for-each-ref', '--format=%(refname:short)', 'refs/heads')).split(/\r?\n/).filter(Boolean);
+    const current = (await git(repo, 'symbolic-ref', '--short', '-q', 'HEAD').catch(() => '')).trim();
+    const trunk = ['main', 'master', current].find((b) => b && heads.includes(b));
+    if (!trunk) return null;
+    const net = { cwd: repo, windowsHide: true, timeout: 60_000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } };
+    if ((await exec('git', ['ls-remote', '--heads', remote], net)).stdout.trim()) return null;
+    await exec('git', ['push', '-q', '--set-upstream', remote, `refs/heads/${trunk}:refs/heads/${trunk}`], net);
+    return `Pushed ${trunk} to ${remote} first, so it's the repo's default branch`;
+  } catch {
+    return null;
+  }
 }
