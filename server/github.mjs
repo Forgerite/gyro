@@ -52,7 +52,8 @@ export async function repoInfo(repo) {
     url: r.url,
     description: r.description || null,
     private: r.isPrivate,
-    defaultBranch: r.defaultBranchRef?.name ?? null,
+    // An empty repo reports its default branch as "": that's "none yet", not a branch name.
+    defaultBranch: r.defaultBranchRef?.name || null,
     owner: r.owner?.login ?? r.nameWithOwner.split('/')[0],
   };
 }
@@ -113,6 +114,28 @@ export async function resolveLink({ repo, project: p }) {
     project: board && { owner: board.owner, number: board.number, title: board.title, url: board.url },
     linkedAt: Date.now(),
   };
+}
+
+// ---------- new repos ----------
+
+/** Who a new repo can belong to: the gh login, then its organizations. */
+export async function githubOwners() {
+  const [me, orgs] = await Promise.all([ghJson(['api', 'user']), ghJson(['api', 'user/orgs', '--paginate']).catch(() => [])]);
+  return [me.login, ...orgs.map((o) => o.login)];
+}
+
+/**
+ * Create an empty GitHub repo `owner/name` and return its clone URL, in the protocol gh is set up for
+ * (so pushing uses the same credentials gh does).
+ */
+export async function createRepo({ repo, isPrivate }) {
+  if (!REPO.test(repo ?? '')) throw new Error('Use the form owner/name');
+  await gh(['repo', 'create', repo, isPrivate ? '--private' : '--public'], 60_000);
+  const [info, protocol] = await Promise.all([
+    ghJson(['repo', 'view', repo, '--json', 'url,sshUrl']),
+    gh(['config', 'get', 'git_protocol', '-h', 'github.com']).catch(() => ''),
+  ]);
+  return { repo, url: protocol.trim() === 'ssh' ? info.sshUrl : `${info.url}.git` };
 }
 
 // ---------- pull requests ----------

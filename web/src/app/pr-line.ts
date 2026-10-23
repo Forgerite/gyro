@@ -144,7 +144,8 @@ export class PrLine {
     const g = this.ws().github;
     const w = this.wt();
     if (!g || !this.ws().pulls || !w.branch || w.detached) return null;
-    const base = g.defaultBranch ?? w.git.trunk?.replace(/^[^/]+\//, '');
+    // || not ??: a link saved while the repo was empty can have "" here.
+    const base = g.defaultBranch || w.git.trunk?.replace(/^[^/]+\//, '');
     return base && w.branch !== base ? base : null;
   });
 

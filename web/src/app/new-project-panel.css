@@ -63,6 +63,25 @@ input[aria-invalid='true'] { border-color: var(--danger); }
 .check input { margin: 2px 0 0; }
 .check.dim { color: var(--muted); }
 .muted { color: var(--muted); }
+.gh { display: flex; align-items: center; gap: 6px; margin-left: 19px; min-width: 0; }
+.gh select {
+  font: inherit;
+  padding: 3px 6px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+}
+.gh select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.repo { flex: 1 1 0; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vis { display: flex; gap: 10px; }
+.vis label { display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+.vis input { margin: 0; }
+.vis input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.gh + .help { margin-left: 19px; }
 .warn { margin: 0; color: var(--dirty); font-size: 11px; }
 .actions { display: flex; align-items: center; gap: 8px; }
 .spacer { flex: 1; }

@@ -8,7 +8,7 @@ import { basename, join, resolve } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import { getDev, getGithub, isClosed, setClosed, setDev, setGithub } from './state.mjs';
-import { entryBrief, githubOptions, mergePr, moveEntry, openPulls, prDetail, projectBoard, projectEntry, resolveLink, whyNotMergeable } from './github.mjs';
+import { createRepo, entryBrief, githubOptions, githubOwners, mergePr, moveEntry, openPulls, prDetail, projectBoard, projectEntry, repoInfo, resolveLink, whyNotMergeable } from './github.mjs';
 import { findReports, serveReport } from './reports.mjs';
 import { attachLiveSocket } from './live.mjs';
 import { listRecordings, readFrame, recordingIndex } from './recordings.mjs';
@@ -87,12 +87,16 @@ const pullsCache = new Map();
 /** "owner/number" -> { at, board, pending } */
 const boardCache = new Map();
 
-/** Cached open PRs of `repo`, kicking off a refetch in the background when they're stale. */
+/**
+ * Cached open PRs of `repo`, kicking off a refetch in the background when they're stale. The refetch
+ * also reads the repo's default branch, which changes after linking (an empty repo has none yet).
+ */
 function pullsFor(repo, force = false) {
   const key = repo.toLowerCase();
-  const c = pullsCache.get(key) ?? { at: 0, list: null, error: null, pending: null };
+  const c = pullsCache.get(key) ?? { at: 0, list: null, error: null, pending: null, defaultBranch: undefined };
   pullsCache.set(key, c);
   if ((force || Date.now() - c.at > PULLS_TTL) && !c.pending) {
+    repoInfo(repo).then((info) => (c.defaultBranch = info.defaultBranch), () => {}); // unknown: keep the saved one
     c.pending = openPulls(repo)
       .then((list) => Object.assign(c, { list, error: null }))
       .catch((e) => (c.error = e.message)) // keep the last good list
@@ -103,9 +107,14 @@ function pullsFor(repo, force = false) {
 
 /** Attach the GitHub link, the open PRs, and each worktree's PR (by branch) to a project. */
 function withGithub(ws) {
-  const github = getGithub(ws.path);
+  let github = getGithub(ws.path);
   if (!github || ws.closed) return { ...ws, github };
   const c = pullsFor(github.repo);
+  // Keep the saved link's default branch current, so Create PR targets what GitHub has now.
+  if (c.defaultBranch !== undefined && c.defaultBranch !== (github.defaultBranch || null)) {
+    github = { ...github, defaultBranch: c.defaultBranch };
+    setGithub(ws.path, github);
+  }
   const pulls = c.list && { list: c.list, at: c.at, error: c.error };
   const worktrees = ws.worktrees.map((wt) => ({ ...wt, pr: (wt.branch && c.list?.find((p) => p.branch === wt.branch)) || null }));
   return { ...ws, github, pulls, worktrees };
@@ -539,6 +548,10 @@ const server = createServer(async (req, res) => {
       const ws = await knownProject(new URL(req.url, 'http://localhost').searchParams.get('path'));
       return send(res, 200, await detail('worktreeBases', { repo: ws.path, trunk: ws.trunk ?? null }).catch((e) => { throw httpError(400, e.message); }));
     }
+    if (req.method === 'GET' && req.url === '/api/github/owners') {
+      // Not cached: it's asked once per New project panel, and a fresh gh sign-in should show up.
+      return send(res, 200, await githubOwners().then((owners) => ({ owners, error: null }), (e) => ({ owners: [], error: e.message })));
+    }
     if (req.method === 'GET' && req.url === '/api/projects/candidates') {
       return send(res, 200, { root: CODE_ROOT, candidates: await detail('projectCandidates', CODE_ROOT) });
     }
@@ -641,7 +654,7 @@ const server = createServer(async (req, res) => {
         if (!found) return send(res, 400, { error: 'unknown worktree' });
         const github = getGithub(found.repo ?? found.path);
         if (!github) return send(res, 400, { error: 'This project is not linked to GitHub' });
-        const base = github.defaultBranch ?? found.git?.trunk?.replace(/^[^/]+\//, '') ?? null;
+        const base = github.defaultBranch || found.git?.trunk?.replace(/^[^/]+\//, '') || null;
         // The board's open issues, so Claude can link the one this branch addresses. Optional.
         let project = null;
         let issues = [];
@@ -722,9 +735,23 @@ const server = createServer(async (req, res) => {
         return send(res, 200, { github: link });
       }
       if (req.url === '/api/projects/create') {
-        const { mode, name, gitignore, gyro } = await readJson(req);
-        const result = await detail('createProject', { codeRoot: CODE_ROOT, mode, name, gitignore: gitignore === true, gyro: gyro === true })
-          .catch((e) => { throw httpError(400, e.message); }); // bad name, already exists, ...
+        const { mode, name, gitignore, gyro, github } = await readJson(req);
+        // GitHub first: a taken name or a gh problem stops here, before anything exists locally.
+        let remote = null;
+        if (github) {
+          if (typeof github.owner !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(github.owner)) throw httpError(400, 'Bad GitHub owner');
+          await detail('checkProject', { codeRoot: CODE_ROOT, mode, name }).catch((e) => { throw httpError(400, e.message); });
+          remote = await createRepo({ repo: `${github.owner}/${name}`, isPrivate: github.private !== false })
+            .catch((e) => { throw httpError(400, `GitHub: ${e.message}`); });
+        }
+        const result = await detail('createProject', { codeRoot: CODE_ROOT, mode, name, gitignore: gitignore === true, gyro: gyro === true, remote: remote?.url ?? null })
+          .catch((e) => { throw httpError(400, remote ? `${e.message} (the GitHub repo ${remote.repo} was created and is empty)` : e.message); });
+        if (remote) {
+          await resolveLink({ repo: remote.repo }).then(
+            (link) => { setGithub(result.path, link); result.notes.push(`Linked to ${remote.repo}`); },
+            (e) => result.notes.push(`Couldn't link ${remote.repo}: ${e.message}`),
+          );
+        }
         await scan('invalidateRepo', result.path).catch(() => {}); // so the next snapshot has its tile
         await snapshot();
         if (gyro !== true) return send(res, 200, result);
