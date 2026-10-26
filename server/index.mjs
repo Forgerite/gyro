@@ -15,7 +15,7 @@ import { listRecordings, readFrame, recordingIndex } from './recordings.mjs';
 import { leasePorts, loadExcludedPorts, portsOf, releasePorts } from './ports.mjs';
 import { allGyro, finishGyro, gyroBrief, gyroOf, noteGyro, recordGyro, reportStep, startGyro } from './gyro.mjs';
 import { worktreeHome } from './worktrees.mjs';
-import { attachPtySocket, closeShell, closeTerm, detectDev, findTerm, killAllTerms, listTerms, sendPrompt, startDev, startShell, startTerm, stopDev } from './pty.mjs';
+import { attachPtySocket, closeShell, closeTerm, detectDev, findTerm, hasTerms, killAllTerms, listTerms, sendPrompt, startDev, startShell, startTerm, stopDev } from './pty.mjs';
 import { resolvePorts } from '../scripts/worktree-ports.mjs';
 
 const ports = await resolvePorts();
@@ -233,33 +233,48 @@ async function teardownPlan(path) {
     ...check,
     // Never delete the main checkout's branch (it's the repo's own checkout, often trunk).
     branch: wt.isMain ? null : check.branch,
+    remoteBranch: wt.isMain ? null : check.remoteBranch,
   };
 }
 
 /**
  * Archive every session of the worktree and, unless it's the main checkout, remove the worktree
- * and delete its branch. Lost work (uncommitted files, commits not in trunk) requires `ack`.
- * Worktree removal happens first, so a failure there leaves everything as it was.
+ * and delete its branch; with `deleteRemote`, the branch it was pushed to as well. Lost work
+ * (uncommitted files, commits nothing else has) requires `ack`. The remote branch goes first and
+ * the worktree next, so a failure in either leaves the rest as it was.
  */
-async function archiveWorktree(path, ack) {
+async function archiveWorktree(path, ack, deleteRemote = false) {
   const plan = await teardownPlan(path);
   if (plan.liveElsewhere.length) {
     throw httpError(409, `Close the session open in ${plan.liveElsewhere[0].where} first`);
   }
-  if ((plan.dirty || plan.unmerged) && !ack) {
+  const remote = deleteRemote && !plan.isMain ? plan.remoteBranch : null;
+  if (deleteRemote && !plan.isMain && !remote) throw httpError(409, 'This branch has no remote branch to delete', { needsAck: true });
+  if ((plan.dirty || (remote ? remote.unmerged : plan.unmerged)) && !ack) {
     throw httpError(409, 'This worktree has work that would be lost; acknowledge it first', { needsAck: true });
   }
-  if (plan.dockTerminal) {
-    closeTerm(plan.path);
-    await new Promise((r) => setTimeout(r, 800)); // let claude.exe let go of the folder
+  let remoteDeleted = false;
+  if (remote) {
+    try {
+      await detail('deleteRemoteBranch', { repo: plan.repo, remote: remote.remote, name: remote.name, sha: remote.sha });
+      remoteDeleted = true;
+    } catch (e) {
+      throw httpError(502, `Couldn't delete ${remote.remote}/${remote.name}, so nothing was archived: ${e.message}`);
+    }
   }
+  // Wait for what we kill to exit: on Windows a running process keeps the folder from being deleted.
+  // A worktree that's going away loses its dev server and shells too, even once its claude has exited.
+  if (plan.dockTerminal || (!plan.isMain && hasTerms(plan.path))) await closeTerm(plan.path);
   let teardown = null;
   if (!plan.isMain) {
+    // Stop the scanner starting git status inside the folder while it's being deleted.
+    await scan('removingWorktree', { path: plan.path, on: true });
     try {
       teardown = await detail('teardown', { repo: plan.repo, path: plan.path, branch: plan.branch });
     } catch (e) {
       throw httpError(500, `Couldn't remove the worktree: ${e.message.split('\n').slice(-2).join(' ').trim()}`);
     } finally {
+      await scan('removingWorktree', { path: plan.path, on: false }).catch(() => {});
       if (teardown) releasePorts(plan.path); // its port block goes back to the pool
       // Wait for the rescan so the reply (and the next snapshot) no longer lists the worktree.
       await scan('invalidateRepo', plan.repo).catch(() => {});
@@ -268,7 +283,7 @@ async function archiveWorktree(path, ack) {
   // Ids were collected before removal; the worktree may no longer be in the scan.
   const sessions = await scan('archiveByIds', plan.sessionIds);
   worktreeIndex.delete(norm(plan.path));
-  return { removed: !plan.isMain, ...teardown, archived: sessions.archived.length, skipped: sessions.skipped.length };
+  return { removed: !plan.isMain, ...teardown, remoteDeleted, archived: sessions.archived.length, skipped: sessions.skipped.length };
 }
 
 async function openAction({ action, path, sessionId }) {
@@ -777,8 +792,8 @@ const server = createServer(async (req, res) => {
         return send(res, 200, await archiveLoose(list));
       }
       if (req.url === '/api/worktree/archive') {
-        const { path, ack } = await readJson(req);
-        return send(res, 200, await archiveWorktree(path, ack === true));
+        const { path, ack, deleteRemote } = await readJson(req);
+        return send(res, 200, await archiveWorktree(path, ack === true, deleteRemote === true));
       }
     }
     send(res, 404, { error: 'not found' });

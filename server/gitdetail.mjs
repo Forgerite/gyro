@@ -1,5 +1,6 @@
 // Per-worktree git detail, fetched on demand by the panel's Git tab. Runs inside the scanner worker.
 import { execFile } from 'node:child_process';
+import { rm } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { dirname } from 'node:path';
 
@@ -13,10 +14,51 @@ const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 /** Skip git's optional index refresh, so polling status/diff never holds index.lock against a stage or commit. */
 const GIT_ENV = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
 
+const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+/** norm(path) of worktrees being torn down: no git may start inside them (see removeWorktree). */
+const removing = new Set();
+
 /** Interactive requests skip the scan's git queue so a background scan can't delay them. */
 async function git(cwd, ...args) {
+  if (removing.size && [...removing].some((p) => norm(cwd) === p || norm(cwd).startsWith(p + '/'))) {
+    throw new Error('This worktree is being removed');
+  }
   const { stdout } = await exec('git', args, { cwd, windowsHide: true, maxBuffer: 16 << 20, env: GIT_ENV });
   return stdout;
+}
+
+/**
+ * `git worktree remove --force`, made to finish. On Windows a folder can't be deleted while any
+ * process uses it as its working directory or holds a file open in it: a git status from a poll, a
+ * dev server still dying, the virus scanner. git then stops with "failed to delete '<path>':
+ * Permission denied", usually after it has emptied the folder and unregistered the worktree.
+ * Here the rest gets deleted with retries (those handles close within a second or so), then pruned.
+ */
+async function removeWorktree(repo, path) {
+  if (norm(repo) === norm(path)) throw new Error("Won't remove the main checkout");
+  removing.add(norm(path));
+  try {
+    for (let attempt = 1; ; attempt++) {
+      let failure;
+      try {
+        await git(repo, 'worktree', 'remove', '--force', path);
+        return;
+      } catch (e) {
+        failure = e;
+      }
+      try {
+        await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+        await git(repo, 'worktree', 'prune');
+        const listed = (await git(repo, 'worktree', 'list', '--porcelain')).split(/\r?\n/)
+          .some((l) => l.startsWith('worktree ') && norm(l.slice(9)) === norm(path));
+        if (!listed) return;
+      } catch { /* still in use: try again below */ }
+      if (attempt === 3) throw failure;
+      await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
+  } finally {
+    removing.delete(norm(path));
+  }
 }
 
 /** Network git (fetch/pull/push): never prompt on a terminal nobody can see, and give up eventually. */
@@ -388,12 +430,56 @@ export function gitDetail(findWorktree) {
     // The main checkout is the parent of the shared .git dir; ask git rather than trust any cache.
     const commonDir = (await git(wt.path, 'rev-parse', '--path-format=absolute', '--git-common-dir')).trim();
     const repo = dirname(commonDir);
-    return { repo, branch: branch === 'HEAD' ? null : branch, trunk, dirty: files.length, files: files.slice(0, 8), unmerged: commits.length, commits: commits.slice(0, 5) };
+    const remoteBranch = branch !== 'HEAD' ? await publishedBranch(wt.path, branch, trunk) : null;
+    return { repo, branch: branch === 'HEAD' ? null : branch, trunk, dirty: files.length, files: files.slice(0, 8), unmerged: commits.length, commits: commits.slice(0, 5), remoteBranch };
   }
 
-  /** `git worktree remove --force`, then delete the branch. Runs from the main checkout. */
+  /**
+   * The remote branch this branch was pushed to, if any: same name, tracked as its upstream, never
+   * trunk. `unmerged`/`commits` are what deleting it along with the local branch would lose (commits
+   * on either that nothing else reaches), since a pushed branch's commits otherwise count as safe.
+   */
+  async function publishedBranch(path, branch, trunk) {
+    const remote = (await git(path, 'config', `branch.${branch}.remote`).catch(() => '')).trim();
+    const merge = (await git(path, 'config', `branch.${branch}.merge`).catch(() => '')).trim();
+    if (!remote || remote === '.' || merge !== `refs/heads/${branch}`) return null;
+    if (trunk && (trunk === `${remote}/${branch}` || trunk === branch)) return null;
+    const ref = `refs/remotes/${remote}/${branch}`;
+    const sha = (await git(path, 'rev-parse', '--verify', '--quiet', ref).catch(() => '')).trim();
+    if (!sha) return null;
+    const commits = lines(
+      await git(path, 'log', '-n', '200', `--format=%h${FS}%s`, 'HEAD', ref, '--not',
+        `--exclude=${branch}`, '--branches', `--exclude=${remote}/${branch}`, '--remotes', '--tags').catch(() => ''),
+    ).map((l) => {
+      const [h, subject] = l.split(FS);
+      return { h, subject };
+    });
+    return { remote, name: branch, sha, unmerged: commits.length, commits: commits.slice(0, 5) };
+  }
+
+  /**
+   * Delete `name` on `remote`, but only while it still points at `sha` (what the check showed):
+   * commits pushed there since must not vanish unseen. Already gone counts as done.
+   */
+  async function deleteRemoteBranch({ repo, remote, name, sha }) {
+    const net = (...args) => gitNet(repo, ...args).catch((e) => {
+      if (e.killed) throw new Error(`git ${args[0]} timed out`);
+      throw new Error(gitError(e));
+    });
+    const listed = (await net('ls-remote', remote, `refs/heads/${name}`)).trim().split(/\s+/)[0] ?? '';
+    if (!listed) {
+      // Deleted there already (e.g. GitHub's delete-on-merge): drop the stale tracking ref too.
+      await git(repo, 'update-ref', '-d', `refs/remotes/${remote}/${name}`).catch(() => {});
+      return { alreadyGone: true };
+    }
+    if (listed !== sha) throw new Error(`${remote}/${name} has commits you haven't fetched; fetch and review them, or leave it on ${remote}`);
+    await net('push', `--force-with-lease=refs/heads/${name}:${sha}`, remote, '--delete', `refs/heads/${name}`);
+    return { alreadyGone: false };
+  }
+
+  /** Remove the worktree (see removeWorktree), then delete the branch. Runs from the main checkout. */
   async function teardown({ repo, path, branch }) {
-    await git(repo, 'worktree', 'remove', '--force', path);
+    await removeWorktree(repo, path);
     let branchDeleted = false;
     let branchError = null;
     if (branch) {
@@ -407,5 +493,5 @@ export function gitDetail(findWorktree) {
     return { branchDeleted, branchError };
   }
 
-  return { gitGraph, gitChanges, gitDiff, gitAction, commitFiles, commitDiff, teardownCheck, teardown };
+  return { gitGraph, gitChanges, gitDiff, gitAction, commitFiles, commitDiff, teardownCheck, teardown, deleteRemoteBranch };
 }

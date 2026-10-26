@@ -17,12 +17,15 @@ interface TeardownPlan {
   files: string[];
   unmerged: number;
   commits: { h: string; subject: string }[];
+  /** The remote branch it was pushed to; its counts are what deleting both copies would lose. */
+  remoteBranch: { remote: string; name: string; unmerged: number; commits: { h: string; subject: string }[] } | null;
 }
 
 export interface ArchiveResult {
   removed: boolean;
   branchDeleted?: boolean;
   branchError?: string | null;
+  remoteDeleted?: boolean;
   archived: number;
 }
 
@@ -50,6 +53,14 @@ export interface ArchiveResult {
         } @else {
           <li>Remove the worktree folder <code>{{ p.path }}</code></li>
           @if (p.branch) { <li>Delete the branch <code>{{ p.branch }}</code></li> }
+          @if (p.remoteBranch; as rb) {
+            <li>
+              <label class="opt">
+                <input type="checkbox" [checked]="deleteRemote()" (change)="setDeleteRemote($any($event.target).checked)" [disabled]="busy()" />
+                Also delete <code>{{ rb.remote }}/{{ rb.name }}</code> on {{ rb.remote }}
+              </label>
+            </li>
+          }
         }
       </ul>
 
@@ -59,7 +70,7 @@ export interface ArchiveResult {
         </div>
       }
 
-      @if (!p.isMain && (p.dirty || p.unmerged)) {
+      @if (!p.isMain && (p.dirty || lost().count)) {
         <div class="loss" role="alert">
           <div class="loss-title">⚠ This permanently loses work</div>
           @if (p.dirty) {
@@ -69,12 +80,17 @@ export interface ArchiveResult {
               @if (p.dirty > p.files.length) { <li class="muted">…and {{ p.dirty - p.files.length }} more</li> }
             </ul>
           }
-          @if (p.unmerged) {
-            <div>{{ p.unmerged }} commit{{ p.unmerged === 1 ? ' that exists' : 's that exist' }} only on this branch (only recoverable from git's reflog for a while):</div>
-            <ul class="items">
-              @for (c of p.commits; track c.h) { <li><code>{{ c.h }}</code> {{ c.subject }}</li> }
-              @if (p.unmerged > p.commits.length) { <li class="muted">…and {{ p.unmerged - p.commits.length }} more</li> }
-            </ul>
+          @if (lost(); as l) {
+            @if (l.count) {
+              <div>
+                {{ l.count }} commit{{ l.count === 1 ? ' that exists' : 's that exist' }} only on this branch{{ l.withRemote ? ' and its remote branch' : '' }}
+                (only recoverable from git's reflog for a while):
+              </div>
+              <ul class="items">
+                @for (c of l.commits; track c.h) { <li><code>{{ c.h }}</code> {{ c.subject }}</li> }
+                @if (l.count > l.commits.length) { <li class="muted">…and {{ l.count - l.commits.length }} more</li> }
+              </ul>
+            }
           }
           <label class="ack">
             <input type="checkbox" [checked]="ack()" (change)="ack.set($any($event.target).checked)" />
@@ -105,12 +121,22 @@ export class TeardownCard {
 
   protected readonly plan = signal<TeardownPlan | null>(null);
   protected readonly ack = signal(false);
+  /** Off by default: the remote copy is what keeps a pushed branch's commits safe. */
+  protected readonly deleteRemote = signal(false);
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);
 
+  /** Commits archiving would lose: deleting the remote branch too can lose more than the local one alone. */
+  protected readonly lost = computed(() => {
+    const p = this.plan();
+    const rb = this.deleteRemote() ? p?.remoteBranch : null;
+    if (rb) return { count: rb.unmerged, commits: rb.commits, withRemote: true };
+    return { count: p?.unmerged ?? 0, commits: p?.commits ?? [], withRemote: false };
+  });
+
   private readonly needsAck = computed(() => {
     const p = this.plan();
-    return !!p && !p.isMain && (p.dirty > 0 || p.unmerged > 0);
+    return !!p && !p.isMain && (p.dirty > 0 || this.lost().count > 0);
   });
   protected readonly canRun = computed(
     () => !!this.plan() && !this.busy() && !this.plan()!.liveElsewhere.length && (!this.needsAck() || this.ack()),
@@ -129,6 +155,7 @@ export class TeardownCard {
   private check(path: string) {
     this.plan.set(null);
     this.ack.set(false);
+    this.deleteRemote.set(false);
     this.error.set(null);
     this.http.get<TeardownPlan>(`/api/worktree/check?path=${encodeURIComponent(path)}`).subscribe({
       next: (p) => this.plan.set(p),
@@ -136,12 +163,19 @@ export class TeardownCard {
     });
   }
 
+  /** What would be lost changes with it, so an earlier acknowledgement no longer counts. */
+  protected setDeleteRemote(on: boolean) {
+    this.deleteRemote.set(on);
+    this.ack.set(false);
+  }
+
   protected run() {
     const p = this.plan();
     if (!p || !this.canRun()) return;
     this.busy.set(true);
     this.error.set(null);
-    this.http.post<ArchiveResult>('/api/worktree/archive', { path: p.path, ack: this.ack() }).subscribe({
+    const deleteRemote = this.deleteRemote() && !!p.remoteBranch;
+    this.http.post<ArchiveResult>('/api/worktree/archive', { path: p.path, ack: this.ack(), deleteRemote }).subscribe({
       next: (r) => {
         this.busy.set(false);
         this.api.refresh();
