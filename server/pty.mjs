@@ -33,6 +33,17 @@ function killTree(term) {
   else term.proc.kill();
 }
 
+/**
+ * Resolves once all of `list` have exited, or after `ms` so a stuck process can't hang the caller.
+ * The PTY reports exit about a second after taskkill returns, so taskkill finishing isn't enough.
+ */
+function whenExited(list, ms = 5000) {
+  const pending = list.filter((t) => !t.exited).map((t) => t.done);
+  if (!pending.length) return Promise.resolve();
+  let timer;
+  return Promise.race([Promise.all(pending), new Promise((r) => (timer = setTimeout(r, ms)))]).finally(() => clearTimeout(timer));
+}
+
 export function listTerms() {
   return [...terms.values()].map(({ path, sessionId, resumed, pid, startedAt, exited, exitCode, clients, devCommand }) => {
     const d = devs.get(norm(path));
@@ -52,6 +63,7 @@ export function findTerm(path) {
 function spawnTerm(file, args, cwd, extra, env = {}) {
   const proc = pty.spawn(file, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd, env: { ...childEnv(), ...liveEnv(cwd), ...env } });
   const term = { pid: proc.pid, startedAt: Date.now(), exited: false, exitCode: null, proc, buffer: '', clients: new Set(), ...extra };
+  term.done = new Promise((r) => proc.onExit(r));
   proc.onData((d) => {
     term.buffer = (term.buffer + d).slice(-SCROLLBACK_CHARS);
     term.onData?.(d);
@@ -204,17 +216,31 @@ export function closeShell(path, id) {
   group.list = group.list.filter((t) => t !== term);
 }
 
-/** Kill (if running) and forget the terminals for `path`: claude, its dev server and its shells. */
+/** Whether Gyro runs anything in `path` (claude, dev server or a shell), exited or not. */
+export function hasTerms(path) {
+  return terms.has(norm(path)) || devs.has(norm(path)) || !!shells.get(norm(path))?.list.length;
+}
+
+/**
+ * Kill (if running) and forget the terminals for `path`: claude, its dev server and its shells.
+ * Resolves once they have exited (see whenExited), for callers about to delete the folder.
+ */
 export function closeTerm(path) {
+  const closing = [];
   for (const map of [terms, devs]) {
     const term = map.get(norm(path));
     if (!term) continue;
+    closing.push(term);
     if (!term.exited) killTree(term);
     for (const ws of term.clients) ws.close();
     map.delete(norm(path));
   }
-  for (const term of shells.get(norm(path))?.list ?? []) closeShell(path, term.id);
+  for (const term of shells.get(norm(path))?.list ?? []) {
+    closing.push(term);
+    closeShell(path, term.id);
+  }
   shells.delete(norm(path));
+  return whenExited(closing);
 }
 
 function broadcast(term, msg) {

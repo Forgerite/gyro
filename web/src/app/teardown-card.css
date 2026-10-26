@@ -26,6 +26,7 @@ code { font-size: 11px; background: var(--hover); padding: 0 4px; border-radius:
 .loss-title { font-weight: 700; color: var(--waiting); }
 .items { margin: 0 0 4px; padding-left: 18px; display: grid; gap: 2px; }
 .items code { background: color-mix(in srgb, var(--panel) 60%, transparent); }
+.opt { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .ack { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: 600; cursor: pointer; }
 
 .actions { display: flex; align-items: center; gap: 12px; }

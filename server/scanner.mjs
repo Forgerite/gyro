@@ -80,7 +80,11 @@ async function findTrunk(repo) {
   return null;
 }
 
+/** norm(path) of worktrees being torn down: a git process inside one would keep it from being deleted. */
+const removing = new Set();
+
 async function worktreeStatus(path, trunk) {
+  if (removing.has(norm(path))) return statusCache.get(norm(path))?.git ?? { missing: true };
   try {
     const files = (await git(path, 'status', '--porcelain=v1')).split(/\r?\n/).filter(Boolean);
     // Commits on HEAD that trunk doesn't contain. Note: squash-merged branches still count as unmerged.
@@ -498,7 +502,13 @@ async function invalidateRepo(repo) {
   await loadWorkspaces({ fresh: true }); // other repos stay cached, so this is quick
 }
 
-const ops = { snapshot, findWorktree, touch, archiveByIds, invalidateRepo, orphans };
+/** Archive is about to delete (or has finished with) this worktree: stop or resume checking its status. */
+function removingWorktree({ path, on }) {
+  if (on) removing.add(norm(path));
+  else removing.delete(norm(path));
+}
+
+const ops = { snapshot, findWorktree, touch, archiveByIds, invalidateRepo, orphans, removingWorktree };
 
 parentPort.on('message', async ({ id, op, arg }) => {
   try {
