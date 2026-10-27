@@ -35,20 +35,37 @@
     inst.addListener({ runAfterCreateBrowserContext: onContext, onDidCreateBrowserContext: onContext });
   }
 
-  // ---- the connection to Gyro: one socket per process, opened on the first page ----
+  // ---- the connection to Gyro: one socket per process, open while any page is streaming ----
+  // An open socket keeps Node alive, so it closes when the last page ends; otherwise a plain
+  // Playwright script would hang after its browser exits. A later page opens a new one.
 
   let ws = null;
   let queue = [];
+  let live = 0; // pages streaming right now
+  let closeOnOpen = false;
   function send(msg) {
-    if (!ws) connect();
+    if (!ws || ws.readyState > 1) connect();
     if (ws.readyState === 1) ws.send(JSON.stringify(msg));
-    else if (ws.readyState === 0 && queue.length < 50) queue.push(msg);
+    else if (queue.length < 50) queue.push(msg);
   }
   function connect() {
-    ws = new WebSocket(url);
-    ws.addEventListener('open', () => { for (const m of queue) ws.send(JSON.stringify(m)); queue = []; });
-    ws.addEventListener('error', () => {});
-    ws.addEventListener('close', () => { queue = []; });
+    const sock = (ws = new WebSocket(url));
+    queue = [];
+    closeOnOpen = false;
+    sock.addEventListener('open', () => {
+      if (ws !== sock) return;
+      for (const m of queue) sock.send(JSON.stringify(m));
+      queue = [];
+      if (closeOnOpen) sock.close();
+    });
+    sock.addEventListener('error', () => {});
+    sock.addEventListener('close', () => { if (ws === sock) queue = []; });
+  }
+  /** Close once nothing is streaming; what was already sent still goes out first. */
+  function closeIfIdle() {
+    if (live > 0 || !ws) return;
+    if (ws.readyState === 0) closeOnOpen = true; // closing now would drop the queued messages
+    else if (ws.readyState === 1) ws.close();
   }
 
   // ---- pages ----
@@ -71,9 +88,13 @@
   function stream(page) {
     const id = `${process.pid}-${nextId++}`;
     const state = { ended: false };
+    live++;
+    closeOnOpen = false;
     page.once('close', () => {
       state.ended = true;
+      live--;
       send({ t: 'end', id });
+      closeIfIdle();
     });
     send({ t: 'start', id, title: testTitle() });
     state.frame = (data, w, h) => { if (!state.ended) send({ t: 'frame', id, title: testTitle(), w, h, data }); };
