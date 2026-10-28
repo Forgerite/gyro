@@ -269,6 +269,30 @@ function findTermSession(path) {
 
 const httpError = (status, message, extra = {}) => Object.assign(new Error(message), { status, ...extra });
 
+/** A live session mid-turn, or waiting on background work it started. */
+const isWorkingLive = (live) => !!live && (live.status === 'busy' || live.status === 'shell' || !!live.background);
+
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+
+/**
+ * End a claude process running outside Gyro (e.g. in Windows Terminal), with its children: a shell
+ * or MCP server it started would otherwise keep the worktree folder locked. Resolves once it's gone.
+ */
+async function closeSessionProcess(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error('no process id');
+  if (!pidAlive(pid)) return;
+  await new Promise((resolve) => {
+    const kill = process.platform === 'win32'
+      ? spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+      : (process.kill(pid, 'SIGTERM'), null);
+    if (!kill) return resolve();
+    kill.on('exit', resolve);
+    kill.on('error', resolve); // judged by whether it's gone, below
+  });
+  for (let i = 0; i < 50 && pidAlive(pid); i++) await new Promise((r) => setTimeout(r, 100));
+  if (pidAlive(pid)) throw new Error('it is still running');
+}
+
 /** Everything archiving this worktree would do or lose, checked fresh against git. */
 async function teardownPlan(path) {
   // Sessions come from the snapshot index; refresh it once if this worktree isn't there yet.
@@ -278,10 +302,14 @@ async function teardownPlan(path) {
   const check = await detail('teardownCheck', { path: wt.path, git: { trunk: wt.git?.trunk ?? null } });
   const repo = check.repo;
   const dockSession = findTermSession(wt.path);
-  // Open in Claude Desktop or another terminal: we can't (and shouldn't) close it from here.
+  // Open in Claude Desktop or another terminal. A terminal's claude is its own process, so Land can
+  // close it; Claude Desktop's isn't safely ours to kill (its app is Claude.exe too).
   const liveElsewhere = (wt.sessions ?? [])
     .filter((s) => s.live && s.id !== dockSession)
-    .map((s) => ({ title: s.title, where: s.live.entrypoint === 'claude-desktop' ? 'Claude Desktop' : 'a terminal' }));
+    .map((s) => {
+      const desktop = s.live.entrypoint === 'claude-desktop';
+      return { title: s.title, where: desktop ? 'Claude Desktop' : 'a terminal', closable: !desktop, pid: s.live.pid, working: isWorkingLive(s.live) };
+    });
   return {
     path: wt.path,
     name: wt.name,
@@ -304,10 +332,11 @@ async function teardownPlan(path) {
  * (uncommitted files, commits nothing else has) requires `ack`. The remote branch goes first and
  * the worktree next, so a failure in either leaves the rest as it was.
  */
-async function archiveWorktree(path, ack, deleteRemote = false) {
+async function archiveWorktree(path, ack, deleteRemote = false, closeElsewhere = false) {
   const plan = await teardownPlan(path);
-  if (plan.liveElsewhere.length) {
-    throw httpError(409, `Close the session open in ${plan.liveElsewhere[0].where} first`);
+  const blocking = plan.liveElsewhere.filter((s) => !(closeElsewhere && s.closable));
+  if (blocking.length) {
+    throw httpError(409, `Close the session open in ${blocking[0].where} first`);
   }
   const remote = deleteRemote && !plan.isMain ? plan.remoteBranch : null;
   if (deleteRemote && !plan.isMain && !remote) throw httpError(409, 'This branch has no remote branch to delete', { needsAck: true });
@@ -326,6 +355,11 @@ async function archiveWorktree(path, ack, deleteRemote = false) {
   // Wait for what we kill to exit: on Windows a running process keeps the folder from being deleted.
   // A worktree that's going away loses its dev server and shells too, even once its claude has exited.
   if (plan.dockTerminal || (!plan.isMain && hasTerms(plan.path))) await closeTerm(plan.path);
+  if (closeElsewhere) {
+    for (const s of plan.liveElsewhere) {
+      await closeSessionProcess(s.pid).catch((e) => { throw httpError(409, `Couldn't close the session open in ${s.where}: ${e.message}`); });
+    }
+  }
   let teardown = null;
   if (!plan.isMain) {
     // Stop the scanner starting git status inside the folder while it's being deleted.
@@ -359,7 +393,7 @@ const RUNNING_DETAIL = {
 };
 
 /** Claude is mid-turn in this worktree (or waiting on background work it started): its edits aren't done. */
-const claudeWorking = (wt) => (wt.sessions ?? []).some((s) => s.live && (s.live.status === 'busy' || s.live.status === 'shell' || s.live.background));
+const claudeWorking = (wt) => (wt.sessions ?? []).some((s) => isWorkingLive(s.live));
 /** Steps that capture the worktree's contents, so they mustn't run under a working Claude. */
 const CAPTURE_STEPS = new Set(['commit', 'sync', 'push', 'pr']);
 
@@ -460,7 +494,8 @@ async function runWorkStep(found, session, step, opts) {
     return { note: `merged PR #${number}` };
   }
   if (step === 'teardown') {
-    const r = await archiveWorktree(found.path, opts.ack === true, opts.deleteRemote === true);
+    // Landing means you're done here: sessions open in a terminal are closed rather than blocking.
+    const r = await archiveWorktree(found.path, opts.ack === true, opts.deleteRemote === true, true);
     return { note: r.removed ? `worktree removed${r.remoteDeleted ? ', remote branch deleted' : ''}` : null };
   }
   if (step === 'archive') {
@@ -907,6 +942,9 @@ const server = createServer(async (req, res) => {
         const { path, ack, deleteRemote } = await readJson(req);
         const found = await knownWorktree(path);
         if (!found) return send(res, 400, { error: 'unknown worktree' });
+        // Refuse before merging, not after: teardown can't close a Claude Desktop session itself.
+        const stuck = (await teardownPlan(found.path)).liveElsewhere.find((s) => !s.closable);
+        if (stuck) return send(res, 409, { error: `Close the session open in ${stuck.where} first` });
         return send(res, 200, startWorkMacro(found, 'land', { ack, deleteRemote }));
       }
       if (req.url === '/api/github/pr/merge') {

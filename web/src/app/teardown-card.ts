@@ -10,7 +10,8 @@ interface TeardownPlan {
   isMain: boolean;
   sessions: number;
   dockTerminal: boolean;
-  liveElsewhere: { title: string | null; where: string }[];
+  /** closable: Land can close it (a terminal's claude); Claude Desktop sessions must be closed there. */
+  liveElsewhere: { title: string | null; where: string; closable: boolean; working: boolean }[];
   branch: string | null;
   trunk: string | null;
   dirty: number;
@@ -49,6 +50,11 @@ export interface ArchiveResult {
         @if (land()) { <li>Squash-merge the PR into <code>{{ p.trunk }}</code></li> }
         <li>Archive {{ p.sessions }} session{{ p.sessions === 1 ? '' : 's' }} to <code>~/.claude/gyro-archive</code></li>
         @if (p.dockTerminal) { <li>Close the terminal running in the dock</li> }
+        @if (land()) {
+          @for (s of closing(); track $index) {
+            <li>Close the session open in {{ s.where }}@if (s.title) { (“{{ s.title }}”) }@if (s.working) { <span class="warn-inline"> — it's working right now</span> }</li>
+          }
+        }
         @if (p.isMain) {
           <li class="muted">The main checkout stays — it's the repository itself.</li>
         } @else {
@@ -65,9 +71,9 @@ export interface ArchiveResult {
         }
       </ul>
 
-      @if (p.liveElsewhere.length) {
+      @if (blocking()[0]; as b) {
         <div class="block" role="alert">
-          A session is open in {{ p.liveElsewhere[0].where }}. Close it there first.
+          A session is open in {{ b.where }}. Close it there first.
         </div>
       }
 
@@ -144,8 +150,12 @@ export class TeardownCard {
     const p = this.plan();
     return !!p && !p.isMain && (p.dirty > 0 || this.lost().count > 0);
   });
+  /** Sessions open outside Gyro that stop this: all of them for Archive; for Land only Claude Desktop's. */
+  protected readonly blocking = computed(() => (this.plan()?.liveElsewhere ?? []).filter((s) => !(this.land() && s.closable)));
+  /** Land closes the rest itself. */
+  protected readonly closing = computed(() => (this.land() ? (this.plan()?.liveElsewhere ?? []).filter((s) => s.closable) : []));
   protected readonly canRun = computed(
-    () => !!this.plan() && !this.busy() && !this.plan()!.liveElsewhere.length && (!this.needsAck() || this.ack()),
+    () => !!this.plan() && !this.busy() && !this.blocking().length && (!this.needsAck() || this.ack()),
   );
 
   /** Only the path matters: the 3s poll hands us a new Worktree object each time. */
