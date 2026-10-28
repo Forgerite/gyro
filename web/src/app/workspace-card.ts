@@ -54,6 +54,9 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessio
               @if (wt.detached) { <span class="branch">&#64;{{ wt.head }}</span> }
             </span>
             <app-wt-flags [git]="wt.git" [pr]="wt.pr" compact />
+            @if (stageChip(wt); as stage) {
+              <span class="stagechip" [class.land]="stage === 'ready to land'" [title]="'Session is ' + stage">{{ stage }}</span>
+            }
             <span class="title">{{ s?.title ?? wt.git.lastCommitSubject ?? '' }}</span>
             <span class="multi">@if (liveIn(wt) > 1) { <span title="More than one live session in this worktree">×{{ liveIn(wt) }}</span> }</span>
             <span class="age">{{ wt.lastActivity | ago: now() }}</span>
@@ -169,6 +172,12 @@ export class WorkspaceCard {
 
   protected liveIn(wt: Worktree) {
     return wt.sessions.filter((s) => s.live).length;
+  }
+
+  /** The stage chip, only when the session awaits the user or a macro runs (quiet otherwise). */
+  protected stageChip(wt: Worktree): string | null {
+    const stage = wt.work?.plan?.stage;
+    return stage === 'ready-to-ship' ? 'ready to ship' : stage === 'ready-to-land' ? 'ready to land' : stage === 'landing' ? 'landing…' : null;
   }
 
   protected stateOf(wt: Worktree): State {

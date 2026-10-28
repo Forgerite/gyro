@@ -37,6 +37,12 @@ export interface GitStatus {
   /** Commits on HEAD not contained in trunk. */
   unmerged: number;
   trunk: string | null;
+  /** The ref the work session's plan measures against (its base, falling back to trunk). */
+  baseRef?: string | null;
+  /** Commits on baseRef not on HEAD, vs local refs as of the last fetch; null: baseRef didn't resolve. */
+  behindBase?: number | null;
+  /** The branch's upstream, for push-ness; null when none is set. */
+  upstream?: { exists: boolean; ahead: number; behind: number } | null;
   lastCommitAt: number | null;
   lastCommitSubject: string | null;
 }
@@ -56,6 +62,64 @@ export interface Worktree {
   ports?: PortBlock | null;
   sessions: Session[];
   lastActivity: number;
+  /** Its work session (the persistent unit of work; null for main/detached/prunable worktrees). */
+  work?: WorkView | null;
+}
+
+/** A worktree's work session, with its live plan and the latest macro run. */
+export interface WorkView {
+  session: WorkSession;
+  /** Recomputed from git/gh every snapshot, never stored; null while the server can't evaluate. */
+  plan: WorkPlan | null;
+  macro: WorkMacro | null;
+}
+
+/** The persistent unit of work owning a worktree, branch, base, issue, PR and conversations. */
+export interface WorkSession {
+  path: string;
+  repo: string;
+  branch: string;
+  base: string;
+  entryId: string | null;
+  issue: number | null;
+  /** PR number once one exists; kept after merge/close (open PRs also appear as `Worktree.pr`). */
+  pr: number | null;
+  /** Claude conversation ids seen in this worktree (newest first, capped). */
+  conversations: string[];
+  status: 'active' | 'done';
+  origin: 'wizard' | 'backfill';
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type WorkStepKey = 'commit' | 'sync' | 'push' | 'pr' | 'merge' | 'teardown' | 'archive';
+export type WorkStage = 'setup' | 'working' | 'ready-to-ship' | 'in-review' | 'ready-to-land' | 'landing' | 'done';
+
+export interface WorkStep {
+  key: WorkStepKey;
+  label: string;
+  status: 'done' | 'pending' | 'blocked' | 'skipped';
+  detail: string | null;
+}
+
+export interface WorkPlan {
+  steps: WorkStep[];
+  stage: WorkStage;
+  badges: 'blocked'[];
+  /** Why the `blocked` badge is there (a dead end needing a human), else null. */
+  blockedReason: string | null;
+}
+
+/** The latest Ship it / Land it / single-step run of a worktree. */
+export interface WorkMacro {
+  macro: 'ship' | 'land' | `step:${WorkStepKey}`;
+  status: 'running' | 'done' | 'failed';
+  step: WorkStepKey | null;
+  error: string | null;
+  needsAck: boolean;
+  startedAt: number;
+  finishedAt: number | null;
+  steps: { key: WorkStepKey; label: string; status: 'running' | 'done' | 'skipped' | 'failed'; detail: string | null; at: number }[];
 }
 
 /** Ports leased to one worktree: base … base + count − 1, unique on this machine. */

@@ -75,6 +75,8 @@ li + li .row { border-top: 1px solid color-mix(in srgb, var(--panel) 40%, transp
 
 .name, .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .branch { color: var(--muted); font-size: 11px; margin-left: 4px; }
+.stagechip { flex: none; font-size: 10px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-2); white-space: nowrap; }
+.stagechip.land { color: var(--accent); border-color: var(--accent); }
 .title { color: var(--text-2); }
 .multi { color: var(--dirty); font-size: 11px; }
 .age { color: var(--muted); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }

@@ -181,7 +181,8 @@ export class NewSessionForm {
     const entry = it && brief ? it.id : null;
     this.busy.set(true);
     this.error.set(null);
-    this.http.post<{ path: string }>('/api/worktrees/create', { path: this.ws().path, name: name.trim(), base }).subscribe({
+    // The picked entry links the work session even when claude isn't briefed on it.
+    this.http.post<{ path: string }>('/api/worktrees/create', { path: this.ws().path, name: name.trim(), base, entry: it?.id ?? null, issue: it?.number ?? null }).subscribe({
       next: ({ path }) => {
         this.busy.set(false);
         this.started.emit({ path, entry });

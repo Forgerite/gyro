@@ -493,5 +493,21 @@ export function gitDetail(findWorktree) {
     return { branchDeleted, branchError };
   }
 
-  return { gitGraph, gitChanges, gitDiff, gitAction, commitFiles, commitDiff, teardownCheck, teardown, deleteRemoteBranch };
+  /**
+   * Fresh commits on `base` that HEAD lacks, fetching the base's remote first: the Land gate's
+   * strict up-to-date check (don't trust a seconds-old scan before merging). behind null: the
+   * base ref doesn't resolve.
+   */
+  async function baseGap({ path, base }) {
+    const wt = await requireWorktree(path);
+    if (!base) return { base, behind: null };
+    const remote = base.includes('/') ? base.split('/')[0] : null;
+    if (remote && lines(await git(wt.path, 'remote').catch(() => '')).includes(remote)) {
+      await gitNet(wt.path, 'fetch', remote).catch(() => {}); // stale counts are still counts
+    }
+    const behind = await git(wt.path, 'rev-list', '--count', `HEAD..${base}`).then((o) => Number(o.trim()), () => null);
+    return { base, behind };
+  }
+
+  return { gitGraph, gitChanges, gitDiff, gitAction, commitFiles, commitDiff, teardownCheck, teardown, deleteRemoteBranch, baseGap };
 }

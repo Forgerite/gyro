@@ -83,6 +83,17 @@ async function findTrunk(repo) {
 /** norm(path) of worktrees being torn down: a git process inside one would keep it from being deleted. */
 const removing = new Set();
 
+/** norm(worktree path) -> base ref its work session rebases onto; pushed by the main thread
+ * (the DB stays out of this worker), falling back to the repo's trunk until it arrives. */
+let sessionBaseMap = new Map();
+
+function sessionBases(list) {
+  const next = new Map(list.map(({ path, base }) => [norm(path), base]));
+  // A changed base must show in the next scan, not after the status TTL.
+  for (const [key, base] of next) if (sessionBaseMap.get(key) !== base) statusCache.delete(key);
+  sessionBaseMap = next;
+}
+
 async function worktreeStatus(path, trunk) {
   if (removing.has(norm(path))) return statusCache.get(norm(path))?.git ?? { missing: true };
   try {
@@ -91,12 +102,27 @@ async function worktreeStatus(path, trunk) {
     const unmerged = trunk
       ? Number((await git(path, 'rev-list', '--count', `${trunk}..HEAD`).catch(() => '0')).trim())
       : 0;
+    // How far HEAD is behind the work session's base (vs local refs as of the last fetch).
+    // null: the base ref doesn't resolve here — the plan shows that, never a silent "up to date".
+    const baseRef = sessionBaseMap.get(norm(path)) ?? trunk;
+    const behindBase = baseRef
+      ? await git(path, 'rev-list', '--count', `HEAD..${baseRef}`).then((out) => Number(out.trim()), () => null)
+      : null;
+    // The branch's upstream, for push-ness (same counts as gitdetail's branchSync, trimmed).
+    let upstream = null;
+    if (await git(path, 'rev-parse', '--verify', '--quiet', '@{u}').then(() => true, () => false)) {
+      const counts = (await git(path, 'rev-list', '--left-right', '--count', 'HEAD...@{u}').catch(() => '')).trim().split(/\s+/);
+      upstream = { exists: true, ahead: Number(counts[0]) || 0, behind: Number(counts[1]) || 0 };
+    }
     // A brand-new repo has no commits yet (unborn HEAD): that's not "missing".
     const lastCommit = (await git(path, 'log', '-1', '--format=%ct%x09%s').catch(() => '')).trim().split('\t');
     return {
       dirty: files.length,
       unmerged,
       trunk,
+      baseRef,
+      behindBase,
+      upstream,
       lastCommitAt: Number(lastCommit[0]) * 1000 || null,
       lastCommitSubject: lastCommit[1] || null,
     };
@@ -508,7 +534,7 @@ function removingWorktree({ path, on }) {
   else removing.delete(norm(path));
 }
 
-const ops = { snapshot, findWorktree, touch, archiveByIds, invalidateRepo, orphans, removingWorktree };
+const ops = { snapshot, findWorktree, touch, archiveByIds, invalidateRepo, orphans, removingWorktree, sessionBases };
 
 parentPort.on('message', async ({ id, op, arg }) => {
   try {
