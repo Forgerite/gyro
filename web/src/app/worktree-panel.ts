@@ -77,7 +77,6 @@ export type OpenRequest = {
     } @else if (tearingDown()) {
       <app-teardown-card [wt]="w" (done)="archived($event)" (cancel)="setTearingDown(false)" />
     } @else {
-    <app-work-plan [wt]="w" />
     @if (shown(); as s) {
       @let state = stateOf(s);
       <section class="session" [class]="state" aria-label="Session">
@@ -98,6 +97,8 @@ export type OpenRequest = {
             @if (s.pr) { · <a [href]="s.pr.url" target="_blank" rel="noopener">PR #{{ s.pr.number }}</a> }
           </div>
         </div>
+
+        <app-work-plan [wt]="w" />
 
         <div class="convo">
           @if (s.lastUser) { <div class="msg user"><span class="who">you</span>{{ s.lastUser }}</div> }
@@ -127,6 +128,7 @@ export type OpenRequest = {
         </div>
       </section>
     } @else {
+      <app-work-plan [wt]="w" class="top" />
       <section class="session empty-state">
         @if (running()) {
           <p>Session starting in the dock below.</p>
