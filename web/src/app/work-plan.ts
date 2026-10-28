@@ -67,8 +67,10 @@ export const STAGE_LABEL: Record<WorkStage, string> = {
     }
   `,
   styles: `
-    /* Top of the Session tab: inset like the session card below it; the tab bar draws the line above. */
-    .plan { display: grid; gap: 6px; padding: 12px 12px 0; }
+    /* The parent sets the inset: none inside the session card, 12px when it sits on its own. */
+    :host { display: block; flex: none; }
+    :host(.top) { padding: 12px 12px 0; }
+    .plan { display: grid; gap: 6px; }
     .head { display: flex; align-items: center; gap: 6px; }
     .spacer { flex: 1; }
     .stage { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-2); white-space: nowrap; }
