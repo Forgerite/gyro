@@ -1,14 +1,13 @@
 import { Component, computed, inject, input, model, output, signal } from '@angular/core';
 import { AgoPipe } from './ago.pipe';
 import { DashboardService } from './dashboard.service';
-import { GyroStepStatus, Workspace } from './model';
-
-const MARK: Record<GyroStepStatus, string> = { done: '✓', skipped: '–', failed: '✗', pending: '○' };
+import { StepList } from './step-list';
+import { Workspace } from './model';
 
 /** Converting a project to Gyro: the confirmation before it starts, then each step's progress. */
 @Component({
   selector: 'app-gyro-section',
-  imports: [AgoPipe],
+  imports: [AgoPipe, StepList],
   template: `
     @let g = ws().gyro;
     @if (confirming()) {
@@ -61,15 +60,7 @@ const MARK: Record<GyroStepStatus, string> = { done: '✓', skipped: '–', fail
             <button type="button" class="link" (click)="confirming.set(true)">run again</button>
           }
         </div>
-        <ol class="steps">
-          @for (s of g.steps; track s.key) {
-            <li [class]="s.status">
-              <span class="mark" aria-hidden="true">{{ mark[s.status] }}</span>
-              <span class="name">{{ s.label }} <span class="sr-only">: {{ s.status }}</span></span>
-              <span class="det">{{ s.detail ?? (s.status === 'pending' ? (g.status === 'running' ? 'Claude is on it' : 'not reported') : '') }}</span>
-            </li>
-          }
-        </ol>
+        <app-step-list [steps]="g.steps" [pendingDetail]="g.status === 'running' ? 'Claude is on it' : 'not reported'" />
         @if (g.summary) { <p class="summary">{{ g.summary }}</p> }
       </section>
     }
@@ -83,13 +74,6 @@ const MARK: Record<GyroStepStatus, string> = { done: '✓', skipped: '–', fail
     .state { font-size: 11px; color: var(--muted); }
     .state.done { color: var(--accent); }
     .state.failed { color: var(--danger); }
-    .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-    .steps li { display: grid; grid-template-columns: 14px auto minmax(0, 1fr); gap: 6px; align-items: baseline; }
-    .mark { color: var(--muted); text-align: center; }
-    .done .mark { color: var(--accent); }
-    .failed .mark, .failed .det { color: var(--danger); }
-    .pending .name { color: var(--muted); }
-    .det { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
     .summary { margin-top: 4px; color: var(--text-2); overflow-wrap: anywhere; }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   `,
@@ -104,7 +88,6 @@ export class GyroSection {
   readonly pick = output<string>();
 
   private readonly api = inject(DashboardService);
-  protected readonly mark = MARK;
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);
 

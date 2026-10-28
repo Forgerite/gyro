@@ -8,12 +8,14 @@ import { basename, join, resolve } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import { getDev, getGithub, isClosed, setClosed, setDev, setGithub } from './state.mjs';
-import { createRepo, entryBrief, githubOptions, githubOwners, mergePr, moveEntry, openPulls, prDetail, projectBoard, projectEntry, repoInfo, resolveLink, whyNotMergeable } from './github.mjs';
+import { createRepo, entryBrief, githubOptions, githubOwners, mergePr, moveEntry, openPulls, prDetail, prForBranch, projectBoard, projectEntry, repoInfo, resolveLink, whyNotMergeable } from './github.mjs';
 import { findReports, serveReport } from './reports.mjs';
 import { attachLiveSocket } from './live.mjs';
 import { listRecordings, readFrame, recordingIndex } from './recordings.mjs';
 import { leasePorts, loadExcludedPorts, portsOf, releasePorts } from './ports.mjs';
 import { allGyro, finishGyro, gyroBrief, gyroOf, noteGyro, recordGyro, reportStep, startGyro } from './gyro.mjs';
+import { STEP_KEYS, addConversations, allWork, createWork, finishMacro, reportMacroStep, setIssueIfEmpty, setPr, setWorkStatus, startMacro, workOf } from './work.mjs';
+import { evaluatePlan } from './plan.mjs';
 import { worktreeHome } from './worktrees.mjs';
 import { attachPtySocket, closeShell, closeTerm, detectDev, findTerm, hasTerms, killAllTerms, listTerms, sendPrompt, startDev, startShell, startTerm, stopDev } from './pty.mjs';
 import { resolvePorts } from '../scripts/worktree-ports.mjs';
@@ -72,10 +74,69 @@ async function snapshot() {
   }
   for (const s of snap.unmatched) looseIds.set(s.id, s);
   const gyro = allGyro();
-  const workspaces = snap.workspaces.map((ws) =>
-    withGithub({ ...ws, gyro: gyro.get(norm(ws.path)) ?? null, worktrees: ws.worktrees.map((wt) => ({ ...wt, ports: portsOf(wt.path) })), closed: isClosed(ws.path), dev: { command: getDev(ws.path) ?? null, detected: detectDev(ws.path) } }),
-  );
+  const work = allWork();
+  const workspaces = snap.workspaces.map((ws) => {
+    const g = withGithub({ ...ws, gyro: gyro.get(norm(ws.path)) ?? null, worktrees: ws.worktrees.map((wt) => ({ ...wt, ports: portsOf(wt.path) })), closed: isClosed(ws.path), dev: { command: getDev(ws.path) ?? null, detected: detectDev(ws.path) } });
+    return { ...g, worktrees: g.worktrees.map((wt) => ({ ...wt, work: workView(wt, g, work) })) };
+  });
+  pushSessionBases();
   return { ...snap, workspaces, terms: listTerms() };
+}
+
+/** Tell the scanner each work session's base ref (it can't read the DB itself); only on change. */
+let pushedBases = '';
+function pushSessionBases() {
+  const list = [...allWork().values()]
+    .filter((w) => w.session.status !== 'done')
+    .map((w) => ({ path: w.session.path, base: w.session.base }));
+  const sig = JSON.stringify(list);
+  if (sig === pushedBases) return;
+  pushedBases = sig;
+  scan('sessionBases', list).catch((e) => console.error('sessionBases push failed', e));
+}
+
+/**
+ * The worktree's work session for the snapshot, backfilling a row for worktrees from before
+ * the ledger (or made outside Gyro) and keeping its PR/issue/conversation links current.
+ * DB access stays on the main thread (the scanner must not touch it).
+ */
+function workView(wt, ws, work) {
+  if (wt.isMain || wt.detached || wt.prunable || !wt.branch) return null;
+  let entry = work.get(norm(wt.path)) ?? null;
+  if (!entry && wt.git?.trunk) {
+    const session = createWork({ path: wt.path, repo: ws.path, branch: wt.branch, base: wt.git.trunk, origin: 'backfill' });
+    entry = { session, macro: null };
+  }
+  if (!entry) return null;
+  if (wt.pr && entry.session.pr !== wt.pr.number) {
+    setPr(wt.path, wt.pr.number);
+    entry.session.pr = wt.pr.number;
+    const issue = wt.pr.closes?.[0];
+    if (issue && entry.session.issue == null) {
+      setIssueIfEmpty(wt.path, issue);
+      entry.session.issue = issue;
+    }
+  }
+  addConversations(wt.path, wt.sessions.map((s) => s.id));
+  // The stored PR left the open list (merged? closed?): its last known state, fetched in the background.
+  const prState = !wt.pr && entry.session.pr && ws.github?.repo ? prStateFor(ws.github.repo, entry.session.pr) : null;
+  return { ...entry, plan: evaluatePlan({ wt, session: entry.session, prState, macro: entry.macro }) };
+}
+
+const PR_STATE_TTL = 60_000;
+/** "repo#number" -> { at, state, pending }; pullsFor-style stale-while-refetch, so a gh call never holds up a snapshot. */
+const prStateCache = new Map();
+function prStateFor(repo, number) {
+  const key = `${repo.toLowerCase()}#${number}`;
+  const c = prStateCache.get(key) ?? { at: 0, state: null, pending: null };
+  prStateCache.set(key, c);
+  if (Date.now() - c.at > PR_STATE_TTL && !c.pending) {
+    c.pending = prDetail(repo, number)
+      .then((d) => (c.state = { state: d.state, notMergeable: whyNotMergeable(d), headSha: d.headSha, mergedAt: d.mergedAt }))
+      .catch(() => {}) // keep the last known state
+      .finally(() => Object.assign(c, { at: Date.now(), pending: null }));
+  }
+  return c.state;
 }
 
 // ---------- GitHub (cached; gh calls never hold up a snapshot) ----------
@@ -208,6 +269,30 @@ function findTermSession(path) {
 
 const httpError = (status, message, extra = {}) => Object.assign(new Error(message), { status, ...extra });
 
+/** A live session mid-turn, or waiting on background work it started. */
+const isWorkingLive = (live) => !!live && (live.status === 'busy' || live.status === 'shell' || !!live.background);
+
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+
+/**
+ * End a claude process running outside Gyro (e.g. in Windows Terminal), with its children: a shell
+ * or MCP server it started would otherwise keep the worktree folder locked. Resolves once it's gone.
+ */
+async function closeSessionProcess(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error('no process id');
+  if (!pidAlive(pid)) return;
+  await new Promise((resolve) => {
+    const kill = process.platform === 'win32'
+      ? spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+      : (process.kill(pid, 'SIGTERM'), null);
+    if (!kill) return resolve();
+    kill.on('exit', resolve);
+    kill.on('error', resolve); // judged by whether it's gone, below
+  });
+  for (let i = 0; i < 50 && pidAlive(pid); i++) await new Promise((r) => setTimeout(r, 100));
+  if (pidAlive(pid)) throw new Error('it is still running');
+}
+
 /** Everything archiving this worktree would do or lose, checked fresh against git. */
 async function teardownPlan(path) {
   // Sessions come from the snapshot index; refresh it once if this worktree isn't there yet.
@@ -217,10 +302,14 @@ async function teardownPlan(path) {
   const check = await detail('teardownCheck', { path: wt.path, git: { trunk: wt.git?.trunk ?? null } });
   const repo = check.repo;
   const dockSession = findTermSession(wt.path);
-  // Open in Claude Desktop or another terminal: we can't (and shouldn't) close it from here.
+  // Open in Claude Desktop or another terminal. A terminal's claude is its own process, so Land can
+  // close it; Claude Desktop's isn't safely ours to kill (its app is Claude.exe too).
   const liveElsewhere = (wt.sessions ?? [])
     .filter((s) => s.live && s.id !== dockSession)
-    .map((s) => ({ title: s.title, where: s.live.entrypoint === 'claude-desktop' ? 'Claude Desktop' : 'a terminal' }));
+    .map((s) => {
+      const desktop = s.live.entrypoint === 'claude-desktop';
+      return { title: s.title, where: desktop ? 'Claude Desktop' : 'a terminal', closable: !desktop, pid: s.live.pid, working: isWorkingLive(s.live) };
+    });
   return {
     path: wt.path,
     name: wt.name,
@@ -243,10 +332,11 @@ async function teardownPlan(path) {
  * (uncommitted files, commits nothing else has) requires `ack`. The remote branch goes first and
  * the worktree next, so a failure in either leaves the rest as it was.
  */
-async function archiveWorktree(path, ack, deleteRemote = false) {
+async function archiveWorktree(path, ack, deleteRemote = false, closeElsewhere = false) {
   const plan = await teardownPlan(path);
-  if (plan.liveElsewhere.length) {
-    throw httpError(409, `Close the session open in ${plan.liveElsewhere[0].where} first`);
+  const blocking = plan.liveElsewhere.filter((s) => !(closeElsewhere && s.closable));
+  if (blocking.length) {
+    throw httpError(409, `Close the session open in ${blocking[0].where} first`);
   }
   const remote = deleteRemote && !plan.isMain ? plan.remoteBranch : null;
   if (deleteRemote && !plan.isMain && !remote) throw httpError(409, 'This branch has no remote branch to delete', { needsAck: true });
@@ -265,6 +355,11 @@ async function archiveWorktree(path, ack, deleteRemote = false) {
   // Wait for what we kill to exit: on Windows a running process keeps the folder from being deleted.
   // A worktree that's going away loses its dev server and shells too, even once its claude has exited.
   if (plan.dockTerminal || (!plan.isMain && hasTerms(plan.path))) await closeTerm(plan.path);
+  if (closeElsewhere) {
+    for (const s of plan.liveElsewhere) {
+      await closeSessionProcess(s.pid).catch((e) => { throw httpError(409, `Couldn't close the session open in ${s.where}: ${e.message}`); });
+    }
+  }
   let teardown = null;
   if (!plan.isMain) {
     // Stop the scanner starting git status inside the folder while it's being deleted.
@@ -284,6 +379,166 @@ async function archiveWorktree(path, ack, deleteRemote = false) {
   const sessions = await scan('archiveByIds', plan.sessionIds);
   worktreeIndex.delete(norm(plan.path));
   return { removed: !plan.isMain, ...teardown, remoteDeleted, archived: sessions.archived.length, skipped: sessions.skipped.length };
+}
+
+// ---------- work sessions: single steps and the Ship it / Land it macros ----------
+
+const SHIP_STEPS = ['commit', 'sync', 'push', 'pr'];
+const LAND_STEPS = ['merge', 'teardown', 'archive'];
+/** What a running step shows while it works (the slow, Claude-driven ones). */
+const RUNNING_DETAIL = {
+  commit: 'Claude is writing the commit message…',
+  sync: 'Claude is stashing, rebasing, resolving any conflicts and reapplying your changes…',
+  pr: 'Claude is writing the PR…',
+};
+
+/** Claude is mid-turn in this worktree (or waiting on background work it started): its edits aren't done. */
+const claudeWorking = (wt) => (wt.sessions ?? []).some((s) => isWorkingLive(s.live));
+/** Steps that capture the worktree's contents, so they mustn't run under a working Claude. */
+const CAPTURE_STEPS = new Set(['commit', 'sync', 'push', 'pr']);
+
+/** norm(path) -> running macro kind: one run per worktree (the detail worker's lock guards each op too). */
+const macroRunning = new Map();
+
+/**
+ * Kick off a macro (ship, land, or a single step as `step:<key>`) and return at once; the run
+ * reports its steps to the DB and the UI watches them through the snapshot, like Gyro conversions.
+ * Idempotent by construction: each step re-checks ground truth and skips itself when already done,
+ * so re-pressing Ship after the base moved runs only sync and push.
+ */
+function startWorkMacro(found, kind, opts = {}) {
+  const key = norm(found.path);
+  if (macroRunning.has(key)) throw httpError(409, `Already running ${macroRunning.get(key)} here`);
+  const { session } = workOf(found.path);
+  if (!session) throw httpError(400, 'No work session for this worktree');
+  const steps = kind === 'ship' ? SHIP_STEPS : kind === 'land' ? LAND_STEPS : [kind.slice('step:'.length)];
+  macroRunning.set(key, kind);
+  startMacro(found.path, kind);
+  void (async () => {
+    let failed = null;
+    for (const step of steps) {
+      reportMacroStep(found.path, step, 'running', RUNNING_DETAIL[step] ?? null);
+      try {
+        const r = await runWorkStep(found, session, step, opts);
+        reportMacroStep(found.path, step, r?.skipped ? 'skipped' : 'done', r?.note ?? null);
+      } catch (e) {
+        reportMacroStep(found.path, step, 'failed', e.message);
+        failed = { step, error: e.message, needsAck: !!e.needsAck };
+        break;
+      }
+    }
+    finishMacro(found.path, !failed, failed ?? {});
+  })()
+    .catch((e) => console.error(`work macro ${kind} in ${found.path}`, e))
+    .finally(() => {
+      macroRunning.delete(key);
+      scan('touch', found.path).catch(() => {});
+    });
+  return workOf(found.path);
+}
+
+/** One lifecycle step, from fresh ground truth. Returns { skipped?, note? }; throws to fail the run. */
+async function runWorkStep(found, session, step, opts) {
+  const wt = { path: found.path, git: { trunk: found.git?.trunk ?? null } };
+  const github = getGithub(found.repo ?? found.path);
+
+  if (step === 'commit') {
+    const { files } = await detail('gitChanges', wt).catch((e) => { throw httpError(409, e.message); });
+    if (!files.length) return { skipped: true, note: 'tree is clean' };
+    // Shipping takes all the work, not a hand-picked selection: stage everything (as the Git tab's stage all does).
+    await detail('gitAction', { path: wt, action: 'stage', all: true }).catch((e) => { throw httpError(409, e.message); });
+    const r = await detail('composeCommit', { path: found.path, hint: '' }).catch((e) => { throw httpError(409, e.message); });
+    return { note: r.commit ? `${r.commit.short} ${r.commit.subject}` : (r.warning ?? null) };
+  }
+  if (step === 'sync') {
+    const r = await detail('autoRebase', { path: found.path, trunk: session.base }).catch((e) => { throw httpError(409, e.message); });
+    if (r.problems?.length) {
+      // Nothing is lost: say where the old tip (and any uncommitted work) were saved.
+      const saved = r.backup ? ` Nothing is lost: the old tip is saved as ${r.backup.head}${r.backup.wip ? ` and your uncommitted work as ${r.backup.wip}` : ''}.` : '';
+      throw httpError(409, `${r.problems.join('; ')}. Open the session terminal to finish the rebase.${saved}`);
+    }
+    if (r.upToDate) return { skipped: true, note: `already on top of ${session.base}` };
+    const fetched = r.fetchNote ? ` (${r.fetchNote})` : '';
+    return { note: `rebased ${r.commits} commit${r.commits === 1 ? '' : 's'} onto ${session.base}${fetched}` };
+  }
+  if (step === 'push') {
+    const note = await detail('gitAction', { path: wt, action: 'push' }).catch((e) => { throw httpError(409, e.message); });
+    return { note: typeof note === 'string' ? note : null };
+  }
+  if (step === 'pr') {
+    if (!github) throw httpError(400, 'This project is not linked to GitHub');
+    const open = await prForBranch(github.repo, found.branch).catch(() => null);
+    if (open) {
+      setPr(found.path, open.number);
+      return { skipped: true, note: `PR #${open.number} already open` };
+    }
+    const r = await createPrFor(found, github);
+    if (r.pr?.number) setPr(found.path, r.pr.number);
+    return { note: r.pr?.number ? `PR #${r.pr.number}` : (r.warning ?? null) };
+  }
+  if (step === 'merge') {
+    if (!github) throw httpError(400, 'This project is not linked to GitHub');
+    const number = session.pr ?? (await prForBranch(github.repo, found.branch).catch(() => null))?.number;
+    if (!number) throw httpError(409, 'No PR to merge; ship first');
+    const pr = await prDetail(github.repo, number).catch((e) => { throw httpError(502, e.message); });
+    if (pr.state === 'MERGED') return { skipped: true, note: `PR #${number} is already merged` };
+    const why = whyNotMergeable(pr);
+    if (why) throw httpError(409, why);
+    // The strict gate, checked fresh: Land only lands a head that's current with its base.
+    const gap = await detail('baseGap', { path: wt, base: session.base }).catch((e) => { throw httpError(409, e.message); });
+    if (gap.behind === null) throw httpError(409, `base ${session.base} not found`);
+    if (gap.behind > 0) throw httpError(409, `${found.branch} is ${gap.behind} commit${gap.behind === 1 ? '' : 's'} behind ${session.base}; ship again to rebase`);
+    await mergePr(github.repo, number, pr.headSha).catch((e) => { throw httpError(409, e.message); });
+    prStateCache.set(`${github.repo.toLowerCase()}#${number}`, { at: Date.now(), state: { state: 'MERGED', notMergeable: `PR #${number} is merged`, headSha: pr.headSha, mergedAt: Date.now() }, pending: null });
+    await pullsFor(github.repo, true).pending; // the open-PR cache drops it
+    return { note: `merged PR #${number}` };
+  }
+  if (step === 'teardown') {
+    // Landing means you're done here: sessions open in a terminal are closed rather than blocking.
+    const r = await archiveWorktree(found.path, opts.ack === true, opts.deleteRemote === true, true);
+    return { note: r.removed ? `worktree removed${r.remoteDeleted ? ', remote branch deleted' : ''}` : null };
+  }
+  if (step === 'archive') {
+    setWorkStatus(found.path, 'done');
+    let note = null;
+    if (github?.project && session.entryId) {
+      // Best effort: a board hiccup shouldn't fail the landing.
+      note = await projectEntry(github.project, session.entryId)
+        .then(async (e) => {
+          const doneCol = e.options.find((o) => o.done);
+          if (!doneCol) return 'board has no Done column';
+          await moveEntry(github.project, session.entryId, doneCol.id);
+          boardCache.delete(`${github.project.owner}/${github.project.number}`.toLowerCase());
+          return `board entry moved to ${doneCol.name}`;
+        })
+        .catch((e) => `couldn't move the board entry: ${e.message}`);
+    }
+    return { note };
+  }
+  throw httpError(400, 'unknown step');
+}
+
+/** Create the PR for this worktree (headless claude writes title and body; pushes first). */
+async function createPrFor(found, github) {
+  const base = github.defaultBranch || found.git?.trunk?.replace(/^[^/]+\//, '') || null;
+  // The board's open issues, so Claude can link the one this branch addresses. Optional.
+  let project = null;
+  let issues = [];
+  if (github.project) {
+    const board = await boardFor(github).catch(() => null);
+    project = board?.title ?? `${github.project.owner}/${github.project.number}`;
+    const repo = github.repo.toLowerCase();
+    issues = (board?.columns ?? []).flatMap((c) => c.items)
+      .filter((it) => it.kind === 'issue' && !it.done && it.number !== null && it.repo?.toLowerCase() === repo)
+      .map((it) => ({ number: it.number, title: it.title, status: it.status }));
+  }
+  try {
+    return await detail('createPr', { path: found.path, repo: github.repo, base, project, issues })
+      .catch((e) => { throw httpError(409, e.message); });
+  } finally {
+    await pullsFor(github.repo, true).pending; // the tile and panel show the new PR on the next snapshot
+    scan('touch', found.path).catch(() => {});
+  }
 }
 
 async function openAction({ action, path, sessionId }) {
@@ -641,17 +896,6 @@ const server = createServer(async (req, res) => {
           scan('touch', wt.path).catch(() => {}); // tiles' ●/◆ flags catch up on the next scan
         }
       }
-      if (req.url === '/api/git/rebase') {
-        const { path } = await readJson(req);
-        const found = await knownWorktree(path);
-        if (!found) return send(res, 400, { error: 'unknown worktree' });
-        try {
-          return send(res, 200, await detail('autoRebase', { path: found.path, trunk: found.git?.trunk ?? null })
-            .catch((e) => { throw httpError(409, e.message); }));
-        } finally {
-          scan('touch', found.path).catch(() => {});
-        }
-      }
       if (req.url === '/api/git/compose') {
         const { path, hint } = await readJson(req);
         const found = await knownWorktree(path);
@@ -669,25 +913,39 @@ const server = createServer(async (req, res) => {
         if (!found) return send(res, 400, { error: 'unknown worktree' });
         const github = getGithub(found.repo ?? found.path);
         if (!github) return send(res, 400, { error: 'This project is not linked to GitHub' });
-        const base = github.defaultBranch || found.git?.trunk?.replace(/^[^/]+\//, '') || null;
-        // The board's open issues, so Claude can link the one this branch addresses. Optional.
-        let project = null;
-        let issues = [];
-        if (github.project) {
-          const board = await boardFor(github).catch(() => null);
-          project = board?.title ?? `${github.project.owner}/${github.project.number}`;
-          const repo = github.repo.toLowerCase();
-          issues = (board?.columns ?? []).flatMap((c) => c.items)
-            .filter((it) => it.kind === 'issue' && !it.done && it.number !== null && it.repo?.toLowerCase() === repo)
-            .map((it) => ({ number: it.number, title: it.title, status: it.status }));
+        const result = await createPrFor(found, github);
+        if (result.pr?.number) setPr(found.path, result.pr.number);
+        return send(res, 200, result);
+      }
+      if (req.url === '/api/work/step') {
+        const { path, step, ack, deleteRemote } = await readJson(req);
+        if (!STEP_KEYS.has(step)) return send(res, 400, { error: `unknown step; use one of ${[...STEP_KEYS].join(', ')}` });
+        const found = await knownWorktree(path);
+        if (!found) return send(res, 400, { error: 'unknown worktree' });
+        // A push or PR without commits would publish an empty branch / PR nothing. (Inside Ship the
+        // commit step runs first, so the macro checks nothing here; this guards the lone knob.)
+        if ((step === 'push' || step === 'pr') && !found.git?.unmerged) {
+          return send(res, 409, { error: step === 'push' ? 'No commits to push yet' : 'No commits to open a PR for yet' });
         }
-        try {
-          return send(res, 200, await detail('createPr', { path: found.path, repo: github.repo, base, project, issues })
-            .catch((e) => { throw httpError(409, e.message); }));
-        } finally {
-          await pullsFor(github.repo, true).pending; // the tile and panel show the new PR on the next snapshot
-          scan('touch', found.path).catch(() => {});
-        }
+        if (CAPTURE_STEPS.has(step) && claudeWorking(found)) return send(res, 409, { error: 'Claude is still working here; wait until it finishes' });
+        return send(res, 200, startWorkMacro(found, `step:${step}`, { ack, deleteRemote }));
+      }
+      if (req.url === '/api/work/ship') {
+        const found = await knownWorktree((await readJson(req)).path);
+        if (!found) return send(res, 400, { error: 'unknown worktree' });
+        // An untouched worktree would ship an empty branch; there's nothing to review in a PR of nothing.
+        if (!found.git?.dirty && !found.git?.unmerged) return send(res, 409, { error: 'Nothing to ship yet: no changes or commits in this worktree' });
+        if (claudeWorking(found)) return send(res, 409, { error: 'Claude is still working here; wait until it finishes' });
+        return send(res, 200, startWorkMacro(found, 'ship'));
+      }
+      if (req.url === '/api/work/land') {
+        const { path, ack, deleteRemote } = await readJson(req);
+        const found = await knownWorktree(path);
+        if (!found) return send(res, 400, { error: 'unknown worktree' });
+        // Refuse before merging, not after: teardown can't close a Claude Desktop session itself.
+        const stuck = (await teardownPlan(found.path)).liveElsewhere.find((s) => !s.closable);
+        if (stuck) return send(res, 409, { error: `Close the session open in ${stuck.where} first` });
+        return send(res, 200, startWorkMacro(found, 'land', { ack, deleteRemote }));
       }
       if (req.url === '/api/github/pr/merge') {
         const { path, number } = await readJson(req);
@@ -728,10 +986,31 @@ const server = createServer(async (req, res) => {
         return send(res, 200, (await knownProject(ws.path)).pulls ?? null);
       }
       if (req.url === '/api/worktrees/create') {
-        const { path, name, base } = await readJson(req);
+        const { path, name, base, entry, issue } = await readJson(req);
         const ws = await knownProject(path);
         const created = await detail('createWorktree', { repo: ws.path, name, base }).catch((e) => { throw httpError(400, e.message); });
+        // The work session owns this worktree from birth: branch, base and the board issue it's for.
+        createWork({
+          path: created.path, repo: ws.path, branch: name, base,
+          entryId: typeof entry === 'string' ? entry : null,
+          issue: Number.isInteger(issue) ? issue : null,
+          origin: 'wizard',
+        });
+        pushSessionBases();
         await scan('invalidateRepo', ws.path).catch(() => {}); // so the next snapshot has it
+        // Best effort: the picked board entry moves to an "in progress" column, if the board has one.
+        const github = getGithub(ws.path);
+        if (typeof entry === 'string' && github?.project) {
+          projectEntry(github.project, entry)
+            .then(async (e) => {
+              const col = e.options.find((o) => /in.?progress|doing|started/i.test(o.name) && !o.done);
+              if (col && e.statusId !== col.id) {
+                await moveEntry(github.project, entry, col.id);
+                boardCache.delete(`${github.project.owner}/${github.project.number}`.toLowerCase());
+              }
+            })
+            .catch((e) => console.error('board move failed', e.message));
+        }
         return send(res, 200, created);
       }
       if (req.url === '/api/projects/dev') {

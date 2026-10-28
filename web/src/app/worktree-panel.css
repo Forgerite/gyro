@@ -208,6 +208,4 @@ app-git-tab, app-pr-tab { flex: 1; }
 .arch-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
 app-teardown-card { flex: 1; }
 /* Smart feature buttons (Claude does the work) */
-.act.smart { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
-.act.smart:disabled { opacity: 0.6; cursor: default; transform: none; }
 .git .ports { color: var(--muted); font-variant-numeric: tabular-nums; }

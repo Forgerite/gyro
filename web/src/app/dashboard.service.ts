@@ -1,7 +1,7 @@
-import { DestroyRef, Service, inject, signal } from '@angular/core';
+import { DestroyRef, Service, computed, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
-import { ChangedFile, CommitInfo, EntryTarget, PrDetail, Session, Snapshot, State, Term, Worktree, looseState, sessionState } from './model';
+import { ChangedFile, CommitInfo, EntryTarget, PrDetail, Session, Snapshot, State, Term, WorkStepKey, WorkView, Worktree, looseState, sessionState } from './model';
 
 const POLL_MS = 3000;
 const PANEL_TAB_KEY = 'gyro.panelTab';
@@ -294,30 +294,6 @@ export class DashboardService {
     });
   }
 
-  /** Auto rebase in flight, by worktree path → start time; and the last outcome per worktree. */
-  readonly rebasing = signal<Record<string, number>>({});
-  readonly rebased = signal<Record<string, RebaseOutcome>>({});
-
-  /** Smart feature: Claude stashes, rebases onto trunk, reapplies the stash and resolves conflicts. */
-  autoRebase(path: string): void {
-    if (this.smartBusy(path)) return;
-    this.rebasing.update((m) => ({ ...m, [path]: Date.now() }));
-    this.clearRebased(path);
-    const done = (o: RebaseOutcome) => {
-      this.rebasing.update(({ [path]: _, ...rest }) => rest);
-      this.rebased.update((m) => ({ ...m, [path]: o }));
-      this.gitChanged();
-    };
-    this.http.post<RebaseResult>('/api/git/rebase', { path }).subscribe({
-      next: (r) => done({ result: r }),
-      error: (e) => done({ error: e.error?.error ?? e.message }),
-    });
-  }
-
-  clearRebased(path: string): void {
-    if (this.rebased()[path]) this.rebased.update(({ [path]: _, ...rest }) => rest);
-  }
-
   /** Create PR in flight, by worktree path → start time; and the last outcome per worktree. */
   readonly creatingPr = signal<Record<string, number>>({});
   readonly prCreated = signal<Record<string, PrOutcome>>({});
@@ -343,9 +319,57 @@ export class DashboardService {
     if (this.prCreated()[path]) this.prCreated.update(({ [path]: _, ...rest }) => rest);
   }
 
-  /** A smart feature (compose, rebase or PR) is working in this worktree: other git actions wait. */
+  /** Ship it / Land it / single-step POSTs in flight, by worktree path (until the macro shows in the snapshot). */
+  readonly workPosting = signal<Record<string, true>>({});
+  /** Worktrees whose latest work macro is running, from the snapshot: the server-visible busy state. */
+  private readonly macroRunning = computed(() => {
+    const paths = new Set<string>();
+    for (const ws of this.snapshot()?.workspaces ?? []) {
+      for (const wt of ws.worktrees) if (wt.work?.macro?.status === 'running') paths.add(wt.path);
+    }
+    return paths;
+  });
+
+  /** Run one lifecycle step (a manual knob), or a whole macro via ship()/land(). */
+  runStep(path: string, step: WorkStepKey, opts: { ack?: boolean; deleteRemote?: boolean } = {}): void {
+    this.workPost(path, '/api/work/step', { path, step, ...opts });
+  }
+
+  /** Ship it: commit → sync (when behind) → push → create PR. Stops at the PR for review. */
+  ship(path: string): void {
+    this.workPost(path, '/api/work/ship', { path });
+  }
+
+  /** Land it: merge → remove the worktree → archive. Only enabled once the PR gate is green. */
+  land(path: string, opts: { ack?: boolean; deleteRemote?: boolean } = {}): void {
+    this.workPost(path, '/api/work/land', { path, ...opts });
+  }
+
+  private workPost(path: string, url: string, body: object): void {
+    if (this.workBusy(path)) return;
+    this.workPosting.update((m) => ({ ...m, [path]: true }));
+    const done = () => this.workPosting.update(({ [path]: _, ...rest }) => rest);
+    this.http.post<WorkView>(url, body).subscribe({
+      next: () => {
+        done();
+        this.gitChanged(); // the snapshot carries the macro's progress from here
+      },
+      error: (e) => {
+        done();
+        this.error.set(e.error?.error ?? e.message);
+        this.refresh();
+      },
+    });
+  }
+
+  /** A work macro is running (or just asked for) in this worktree. */
+  workBusy(path: string): boolean {
+    return !!this.workPosting()[path] || this.macroRunning().has(path);
+  }
+
+  /** A smart feature (compose, PR, or a work macro such as a rebase) is working in this worktree: other git actions wait. */
   smartBusy(path: string): boolean {
-    return !!this.composing()[path] || !!this.rebasing()[path] || !!this.creatingPr()[path];
+    return !!this.composing()[path] || !!this.creatingPr()[path] || this.workBusy(path);
   }
 
   /** A worktree tile's colour: a smart feature, a session still booting in the dock or the PR's CI running counts as working. */
@@ -443,25 +467,6 @@ export class DashboardService {
 interface ComposeResult {
   commit: { h: string; short: string; subject: string };
   warning: string | null;
-}
-
-export interface RebaseResult {
-  upToDate: boolean;
-  branch: string;
-  trunk: string;
-  commits?: number;
-  moved?: boolean;
-  note?: string;
-  summary?: string | null;
-  /** Whatever Gyro's own checks found wrong afterwards (empty = clean). */
-  problems: string[];
-  backup?: { head: string; wip: string | null };
-  fetchNote?: string | null;
-}
-
-export interface RebaseOutcome {
-  result?: RebaseResult;
-  error?: string;
 }
 
 export interface PrResult {

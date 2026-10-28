@@ -46,6 +46,8 @@ export class ChimeService {
   private readonly api = inject(DashboardService);
   /** When each working session was first seen working, by session id. */
   private readonly busySince = new Map<string, number>();
+  /** Each worktree's last seen work stage, to ring when checks go green (in review → ready to land). */
+  private readonly stages = new Map<string, string>();
   private primed = false;
   private ctx: AudioContext | null = null;
 
@@ -80,6 +82,19 @@ export class ChimeService {
       }
     }
     for (const key of this.busySince.keys()) if (!seen.has(key)) this.busySince.delete(key);
+    // The PR gate opening (checks went green while you weren't watching) is worth a bell too.
+    const stagesSeen = new Set<string>();
+    for (const w of snap.workspaces) {
+      for (const wt of w.worktrees) {
+        const stage = wt.work?.plan?.stage;
+        if (!stage) continue;
+        stagesSeen.add(wt.path);
+        const was = this.stages.get(wt.path);
+        this.stages.set(wt.path, stage);
+        if (this.primed && !w.closed && stage === 'ready-to-land' && was === 'in-review') this.play();
+      }
+    }
+    for (const key of this.stages.keys()) if (!stagesSeen.has(key)) this.stages.delete(key);
     this.primed = true;
   }
 

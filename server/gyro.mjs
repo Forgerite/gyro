@@ -2,10 +2,7 @@
 // per-worktree port leases wired into Gyro's machine-wide blocks). Gyro does the mechanical steps;
 // a Claude session does the rest in a worktree made for it and reports each step back here.
 // Progress lives in SQLite (~/.claude/gyro/gyro.db) so it outlasts restarts and terminals.
-import { mkdirSync } from 'node:fs';
-import { DATA_DIR } from './data-dir.mjs';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { db } from './db.mjs';
 
 const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 
@@ -20,8 +17,6 @@ export const GYRO_STEPS = [
 const STEP_KEYS = new Set(GYRO_STEPS.map((s) => s.key));
 const STEP_STATUS = new Set(['done', 'skipped', 'failed']);
 
-mkdirSync(DATA_DIR, { recursive: true });
-const db = new DatabaseSync(join(DATA_DIR, 'gyro.db'));
 db.exec(`
   CREATE TABLE IF NOT EXISTS gyro_projects (
     key TEXT PRIMARY KEY,          -- normalized project path

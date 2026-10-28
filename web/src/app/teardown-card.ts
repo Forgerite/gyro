@@ -10,7 +10,8 @@ interface TeardownPlan {
   isMain: boolean;
   sessions: number;
   dockTerminal: boolean;
-  liveElsewhere: { title: string | null; where: string }[];
+  /** closable: Land can close it (a terminal's claude); Claude Desktop sessions must be closed there. */
+  liveElsewhere: { title: string | null; where: string; closable: boolean; working: boolean }[];
   branch: string | null;
   trunk: string | null;
   dirty: number;
@@ -44,10 +45,16 @@ export interface ArchiveResult {
       <p class="muted">Checking {{ wt().name }}…</p>
     } @else {
       @let p = plan()!;
-      <h3>Archive {{ p.isMain ? 'sessions in' : '' }} {{ p.name }}?</h3>
+      <h3>{{ land() ? 'Land' : 'Archive' }} {{ p.isMain ? 'sessions in' : '' }} {{ p.name }}?</h3>
       <ul class="steps">
+        @if (land()) { <li>Squash-merge the PR into <code>{{ p.trunk }}</code></li> }
         <li>Archive {{ p.sessions }} session{{ p.sessions === 1 ? '' : 's' }} to <code>~/.claude/gyro-archive</code></li>
         @if (p.dockTerminal) { <li>Close the terminal running in the dock</li> }
+        @if (land()) {
+          @for (s of closing(); track $index) {
+            <li>Close the session open in {{ s.where }}@if (s.title) { (“{{ s.title }}”) }@if (s.working) { <span class="warn-inline"> — it's working right now</span> }</li>
+          }
+        }
         @if (p.isMain) {
           <li class="muted">The main checkout stays — it's the repository itself.</li>
         } @else {
@@ -64,9 +71,9 @@ export interface ArchiveResult {
         }
       </ul>
 
-      @if (p.liveElsewhere.length) {
+      @if (blocking()[0]; as b) {
         <div class="block" role="alert">
-          A session is open in {{ p.liveElsewhere[0].where }}. Close it there first.
+          A session is open in {{ b.where }}. Close it there first.
         </div>
       }
 
@@ -103,7 +110,7 @@ export interface ArchiveResult {
 
       <div class="actions">
         <button type="button" class="danger" (click)="run()" [disabled]="!canRun()">
-          {{ busy() ? 'Archiving…' : p.isMain ? 'Archive sessions' : 'Archive & remove worktree' }}
+          {{ land() ? 'Land it' : busy() ? 'Archiving…' : p.isMain ? 'Archive sessions' : 'Archive & remove worktree' }}
         </button>
         <button type="button" class="link" (click)="cancel.emit()" [disabled]="busy()">Cancel</button>
       </div>
@@ -113,7 +120,10 @@ export interface ArchiveResult {
 })
 export class TeardownCard {
   readonly wt = input.required<Worktree>();
+  /** Land mode: confirm the teardown half of Land it — emit `confirm` instead of archiving here. */
+  readonly land = input(false);
   readonly done = output<ArchiveResult>();
+  readonly confirm = output<{ ack: boolean; deleteRemote: boolean }>();
   readonly cancel = output<void>();
 
   private readonly http = inject(HttpClient);
@@ -126,9 +136,11 @@ export class TeardownCard {
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);
 
-  /** Commits archiving would lose: deleting the remote branch too can lose more than the local one alone. */
+  /** Commits archiving would lose: deleting the remote branch too can lose more than the local one alone.
+   *  Land mode: the merge lands these commits first, so they aren't losses (dirty files still are). */
   protected readonly lost = computed(() => {
     const p = this.plan();
+    if (this.land()) return { count: 0, commits: [], withRemote: false };
     const rb = this.deleteRemote() ? p?.remoteBranch : null;
     if (rb) return { count: rb.unmerged, commits: rb.commits, withRemote: true };
     return { count: p?.unmerged ?? 0, commits: p?.commits ?? [], withRemote: false };
@@ -138,8 +150,12 @@ export class TeardownCard {
     const p = this.plan();
     return !!p && !p.isMain && (p.dirty > 0 || this.lost().count > 0);
   });
+  /** Sessions open outside Gyro that stop this: all of them for Archive; for Land only Claude Desktop's. */
+  protected readonly blocking = computed(() => (this.plan()?.liveElsewhere ?? []).filter((s) => !(this.land() && s.closable)));
+  /** Land closes the rest itself. */
+  protected readonly closing = computed(() => (this.land() ? (this.plan()?.liveElsewhere ?? []).filter((s) => s.closable) : []));
   protected readonly canRun = computed(
-    () => !!this.plan() && !this.busy() && !this.plan()!.liveElsewhere.length && (!this.needsAck() || this.ack()),
+    () => !!this.plan() && !this.busy() && !this.blocking().length && (!this.needsAck() || this.ack()),
   );
 
   /** Only the path matters: the 3s poll hands us a new Worktree object each time. */
@@ -155,7 +171,7 @@ export class TeardownCard {
   private check(path: string) {
     this.plan.set(null);
     this.ack.set(false);
-    this.deleteRemote.set(false);
+    this.deleteRemote.set(this.land()); // landing is done with the branch, remote copy included
     this.error.set(null);
     this.http.get<TeardownPlan>(`/api/worktree/check?path=${encodeURIComponent(path)}`).subscribe({
       next: (p) => this.plan.set(p),
@@ -172,6 +188,10 @@ export class TeardownCard {
   protected run() {
     const p = this.plan();
     if (!p || !this.canRun()) return;
+    if (this.land()) {
+      this.confirm.emit({ ack: this.ack() || !this.needsAck(), deleteRemote: this.deleteRemote() && !!p.remoteBranch });
+      return;
+    }
     this.busy.set(true);
     this.error.set(null);
     const deleteRemote = this.deleteRemote() && !!p.remoteBranch;
