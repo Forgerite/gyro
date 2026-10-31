@@ -142,6 +142,12 @@ function prStateFor(repo, number) {
 // ---------- GitHub (cached; gh calls never hold up a snapshot) ----------
 
 const PULLS_TTL = 2 * 60_000;
+/**
+ * While a PR's checks are running, the list drives the tile colour (green until they finish), the
+ * Land gate and the "checks went green" chime, so it's refetched this often instead: at the
+ * 2-minute pace, a finished run could sit unnoticed for about as long as it took to run.
+ */
+const PULLS_CHECKS_TTL = 15_000;
 const BOARD_TTL = 60_000;
 /** repo (lowercase) -> { at, list, error, pending } */
 const pullsCache = new Map();
@@ -156,8 +162,10 @@ function pullsFor(repo, force = false) {
   const key = repo.toLowerCase();
   const c = pullsCache.get(key) ?? { at: 0, list: null, error: null, pending: null, defaultBranch: undefined };
   pullsCache.set(key, c);
-  if ((force || Date.now() - c.at > PULLS_TTL) && !c.pending) {
-    repoInfo(repo).then((info) => (c.defaultBranch = info.defaultBranch), () => {}); // unknown: keep the saved one
+  const stale = force || Date.now() - c.at > PULLS_TTL;
+  if ((stale || (Date.now() - c.at > PULLS_CHECKS_TTL && c.list?.some((p) => p.checksRunning))) && !c.pending) {
+    // The default branch changes rarely: no need to re-ask on the quick check-watching refetches.
+    if (stale) repoInfo(repo).then((info) => (c.defaultBranch = info.defaultBranch), () => {}); // unknown: keep the saved one
     c.pending = openPulls(repo)
       .then((list) => Object.assign(c, { list, error: null }))
       .catch((e) => (c.error = e.message)) // keep the last good list
