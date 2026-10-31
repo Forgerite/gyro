@@ -49,7 +49,7 @@ export function evaluatePlan({ wt, session, prState, macro }) {
   else put('pr', 'pending', null);
 
   // The Land gate: strictly up to date with base AND the PR is clean. Open-PR facts come from
-  // the 2-minute pulls cache; the merge step itself re-checks fresh before acting.
+  // the pulls cache (2 minutes; 15 s while checks run); the merge step itself re-checks fresh before acting.
   if (merged) put('merge', 'done', `PR #${session.pr ?? openPr?.number} merged`);
   else if (!openPr) put('merge', 'blocked', 'no open PR');
   else {
