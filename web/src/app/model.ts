@@ -144,6 +144,12 @@ export interface Workspace {
   pulls?: { list: PullRequest[]; at: number; error: string | null } | null;
   /** The dev server dock sessions start beside. */
   dev?: DevSetting;
+  /** The branch new work starts from and PRs merge into: the base branch set here, else the detected trunk. */
+  trunk?: string | null;
+  /** The repo's remotes, to tell origin/develop (remote) from feature/x (local). */
+  remotes?: string[];
+  /** The base branch setting behind `trunk`. */
+  base?: BaseSetting;
   /** Its Gyro conversion, if one was ever started. */
   gyro?: GyroRun | null;
 }
@@ -178,6 +184,20 @@ export interface GyroRun {
 export interface DevSetting {
   command: string | null;
   detected: string | null;
+}
+
+/** A project's base branch: set in Gyro (a ref like origin/develop), else detected (the remote's HEAD, main or master). */
+export interface BaseSetting {
+  ref: string | null;
+  detected: string | null;
+  /** The set ref when it no longer resolves (deleted or renamed); `trunk` has fallen back to detected. */
+  missing: string | null;
+}
+
+/** The branch name GitHub knows a ref by: origin/release/2.0 -> release/2.0; local refs stay as they are. */
+export function branchName(ref: string, remotes: readonly string[] = []): string {
+  const remote = remotes.find((r) => ref.startsWith(`${r}/`));
+  return remote ? ref.slice(remote.length + 1) : ref;
 }
 
 export interface PullRequest {

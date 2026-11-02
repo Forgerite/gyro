@@ -1,5 +1,6 @@
 import { Component, computed, input, output, signal } from '@angular/core';
 import { AgoPipe } from './ago.pipe';
+import { BaseSection } from './base-section';
 import { BoardSection } from './board-section';
 import { DevSection } from './dev-section';
 import { GithubSection } from './github-section';
@@ -12,7 +13,7 @@ import { OpenRequest } from './worktree-panel';
 
 @Component({
   selector: 'app-project-panel',
-  imports: [AgoPipe, BoardSection, DevSection, GithubSection, GyroSection, NewSessionForm, PullsSection, WtFlags],
+  imports: [AgoPipe, BaseSection, BoardSection, DevSection, GithubSection, GyroSection, NewSessionForm, PullsSection, WtFlags],
   template: `
     @let p = ws();
     <header>
@@ -61,6 +62,7 @@ import { OpenRequest } from './worktree-panel';
         <app-gyro-section [ws]="p" [now]="now()" [(confirming)]="gyroing" (pick)="pick.emit($event)" />
       }
       <app-github-section [ws]="p" />
+      <app-base-section [ws]="p" />
       <app-dev-section [ws]="p" />
 
       <section aria-labelledby="wt-h">

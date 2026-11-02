@@ -1,7 +1,7 @@
 import { Component, computed, effect, inject, input, signal } from '@angular/core';
 import { DashboardService } from './dashboard.service';
 import { boardResource, branchFor } from './board-match';
-import { Workspace, Worktree } from './model';
+import { Workspace, Worktree, branchName } from './model';
 import { CHECKS, reviewText } from './wt-flags';
 
 /**
@@ -144,8 +144,10 @@ export class PrLine {
     const g = this.ws().github;
     const w = this.wt();
     if (!g || !this.ws().pulls || !w.branch || w.detached) return null;
-    // || not ??: a link saved while the repo was empty can have "" here.
-    const base = g.defaultBranch || w.git.trunk?.replace(/^[^/]+\//, '');
+    // Same order as the server: the work session's base, the project's base branch, GitHub's default.
+    // || not ??: a link saved while the repo was empty can have "" as its default.
+    const ref = w.work?.session.base || w.git.trunk || g.defaultBranch;
+    const base = ref ? branchName(ref, this.ws().remotes) : null;
     return base && w.branch !== base ? base : null;
   });
 
