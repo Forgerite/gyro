@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
-import { getDev, getGithub, isClosed, setClosed, setDev, setGithub } from './state.mjs';
+import { allBases, getBase, getDev, getGithub, isClosed, setBase, setClosed, setDev, setGithub } from './state.mjs';
 import { createRepo, entryBrief, githubOptions, githubOwners, mergePr, moveEntry, openPulls, prDetail, prForBranch, projectBoard, projectEntry, repoInfo, resolveLink, whyNotMergeable } from './github.mjs';
 import { findReports, serveReport } from './reports.mjs';
 import { attachLiveSocket } from './live.mjs';
@@ -52,6 +52,8 @@ function workerRpc(file, workerData) {
 
 // Background scanning (git status of every worktree, session logs).
 const scan = workerRpc('./scanner.mjs', { codeRoot: CODE_ROOT });
+// Before the first scan, so each project's trunk is its set base branch from the start.
+scan('projectBases', allBases()).catch((e) => console.error('projectBases push failed', e));
 // On-demand git detail for the panel's Git tab; separate so a running scan can't delay it.
 const detail = workerRpc('./detail-worker.mjs');
 
@@ -76,11 +78,16 @@ async function snapshot() {
   const gyro = allGyro();
   const work = allWork();
   const workspaces = snap.workspaces.map((ws) => {
-    const g = withGithub({ ...ws, gyro: gyro.get(norm(ws.path)) ?? null, worktrees: ws.worktrees.map((wt) => ({ ...wt, ports: portsOf(wt.path) })), closed: isClosed(ws.path), dev: { command: getDev(ws.path) ?? null, detected: detectDev(ws.path) } });
+    const g = withGithub({ ...ws, gyro: gyro.get(norm(ws.path)) ?? null, worktrees: ws.worktrees.map((wt) => ({ ...wt, ports: portsOf(wt.path) })), closed: isClosed(ws.path), dev: { command: getDev(ws.path) ?? null, detected: detectDev(ws.path) }, base: baseSetting(ws) });
     return { ...g, worktrees: g.worktrees.map((wt) => ({ ...wt, work: workView(wt, g, work) })) };
   });
   pushSessionBases();
   return { ...snap, workspaces, terms: listTerms() };
+}
+
+/** The project's base branch: set here (ref), else the detected trunk; missing is a set one that no longer resolves. */
+function baseSetting(ws) {
+  return { ref: getBase(ws.path) ?? null, detected: ws.detectedTrunk ?? null, missing: ws.baseMissing ?? null };
 }
 
 /** Tell the scanner each work session's base ref (it can't read the DB itself); only on change. */
@@ -526,9 +533,13 @@ async function runWorkStep(found, session, step, opts) {
   throw httpError(400, 'unknown step');
 }
 
-/** Create the PR for this worktree (headless claude writes title and body; pushes first). */
+/**
+ * Create the PR for this worktree (headless claude writes title and body; pushes first). It merges
+ * into the branch the work started from (its session's base), else the project's base branch, else
+ * GitHub's default. createPr turns a remote ref like origin/develop into the branch name.
+ */
 async function createPrFor(found, github) {
-  const base = github.defaultBranch || found.git?.trunk?.replace(/^[^/]+\//, '') || null;
+  const base = workOf(found.path)?.session?.base || found.git?.trunk || github.defaultBranch || null;
   // The board's open issues, so Claude can link the one this branch addresses. Optional.
   let project = null;
   let issues = [];
@@ -1027,6 +1038,19 @@ const server = createServer(async (req, res) => {
         if (command !== null && (typeof command !== 'string' || command.length > 500 || /[\r\n]/.test(command))) throw httpError(400, 'bad dev command');
         setDev(ws.path, command === null ? null : command.trim());
         return send(res, 200, { dev: { command: getDev(ws.path) ?? null, detected: detectDev(ws.path) } });
+      }
+      if (req.url === '/api/projects/base') {
+        const { path, ref } = await readJson(req);
+        const ws = await knownProject(path);
+        if (ref !== null) {
+          if (typeof ref !== 'string' || !ref.trim()) throw httpError(400, 'bad base branch');
+          const { branches } = await detail('worktreeBases', { repo: ws.path, trunk: null }).catch((e) => { throw httpError(400, e.message); });
+          if (!branches.some((b) => b.name === ref.trim())) throw httpError(400, `No branch named ${ref.trim()}`);
+        }
+        setBase(ws.path, ref === null ? null : ref.trim());
+        await scan('projectBases', allBases()); // rescans, so the reply already counts against the new base
+        const fresh = await knownProject(ws.path);
+        return send(res, 200, { base: fresh.base, trunk: fresh.trunk ?? null });
       }
       if (req.url === '/api/github/link') {
         const { path, repo, project } = await readJson(req);

@@ -48,11 +48,15 @@ function prompt({ repo, branch, base, remoteBase, project, issues }) {
  * Create a PR for `path`'s branch. `push(path)` publishes the branch first (Gyro's own push).
  * Resolves with the new PR, or throws with why there isn't one.
  */
-export function createPr({ path, repo, base, project, issues = [] }, push) {
+export function createPr({ path, repo, base: baseRef, project, issues = [] }, push) {
   return withLock(path, 'a PR', async () => {
     const branch = await tryGit(path, 'symbolic-ref', '--short', '-q', 'HEAD');
     if (!branch) throw new Error('HEAD is detached; check out a branch first');
-    if (!base) throw new Error('No base branch found for this repository');
+    if (!baseRef) throw new Error('No base branch found for this repository');
+    // GitHub wants a branch name: origin/release/2.0 -> release/2.0 (a local feature/x stays as it is).
+    const remotes = ((await tryGit(path, 'remote')) || '').split(/\r?\n/).filter(Boolean);
+    const baseRemote = remotes.find((r) => baseRef.startsWith(`${r}/`));
+    const base = baseRemote ? baseRef.slice(baseRemote.length + 1) : baseRef;
     if (branch === base) throw new Error(`${branch} is the base branch itself`);
     const existing = await prForBranch(repo, branch);
     if (existing) throw new Error(`PR #${existing.number} is already open for ${branch}`);

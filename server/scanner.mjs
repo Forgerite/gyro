@@ -68,8 +68,7 @@ function parseWorktrees(out) {
 }
 
 /** The repo's trunk ref: a remote's HEAD, else <remote>/main|master, else local main|master. */
-async function findTrunk(repo) {
-  const remotes = (await git(repo, 'remote').catch(() => '')).split(/\r?\n/).filter(Boolean);
+async function findTrunk(repo, remotes) {
   for (const r of remotes) {
     const head = (await git(repo, 'symbolic-ref', '--short', `refs/remotes/${r}/HEAD`).catch(() => '')).trim();
     if (head) return head;
@@ -329,12 +328,36 @@ async function loadWorkspaces({ fresh = false } = {}) {
   return worktreeCache.data ?? [];
 }
 
+/** norm(repo) -> base branch set for the project in Gyro; pushed by the main thread (state.json stays there). */
+let projectBaseMap = new Map();
+
+async function projectBases(map) {
+  const next = new Map(Object.entries(map ?? {}));
+  let changed = false;
+  for (const repo of new Set([...projectBaseMap.keys(), ...next.keys()])) {
+    if (projectBaseMap.get(repo) === next.get(repo)) continue;
+    changed = true;
+    // A changed base must show at once: re-resolve the trunk and recount every worktree against it.
+    for (const key of trunkCache.keys()) if (norm(key) === repo) trunkCache.delete(key);
+    for (const key of statusCache.keys()) if (key.startsWith(repo)) statusCache.delete(key);
+  }
+  projectBaseMap = next;
+  if (!changed || !worktreeCache.data) return; // nothing scanned yet: the first scan uses it
+  if (scanning) await scanning; // a scan already running started before the change
+  await loadWorkspaces({ fresh: true });
+}
+
+/** The repo's trunk: the base branch set in Gyro while it still resolves, else the detected one. */
 async function cachedTrunk(repo) {
   const hit = trunkCache.get(repo);
-  if (hit && Date.now() - hit.at < TRUNK_TTL) return hit.trunk;
-  const trunk = await findTrunk(repo);
-  trunkCache.set(repo, { at: Date.now(), trunk });
-  return trunk;
+  if (hit && Date.now() - hit.at < TRUNK_TTL) return hit;
+  const remotes = (await git(repo, 'remote').catch(() => '')).split(/\r?\n/).filter(Boolean);
+  const detected = await findTrunk(repo, remotes);
+  const set = projectBaseMap.get(norm(repo));
+  const ok = set && await git(repo, 'rev-parse', '--verify', '--quiet', `${set}^{commit}`).then(() => true, () => false);
+  const entry = { at: Date.now(), trunk: ok ? set : detected, detected, missing: set && !ok ? set : null, remotes };
+  trunkCache.set(repo, entry);
+  return entry;
 }
 
 async function scanWorkspaces() {
@@ -347,7 +370,7 @@ async function scanWorkspaces() {
       try { worktrees = parseWorktrees(await git(repo, 'worktree', 'list', '--porcelain')); } catch { /* broken repo */ }
       listCache.set(repo, { at: Date.now(), worktrees: worktrees.map((wt) => ({ ...wt })) });
     }
-    const trunk = await cachedTrunk(repo);
+    const { trunk, detected, missing, remotes } = await cachedTrunk(repo);
     await Promise.all(worktrees.map(async (wt) => {
       wt.isMain = norm(wt.path) === norm(repo);
       wt.name = wt.isMain ? '(main)' : basename(wt.path);
@@ -360,7 +383,8 @@ async function scanWorkspaces() {
         statusCache.set(key, { at: Date.now(), git: wt.git });
       }
     }));
-    return { name: basename(repo), path: repo, trunk, worktrees };
+    // trunk: what work branches from and PRs into. detectedTrunk: what git alone says. baseMissing: a set base that no longer resolves.
+    return { name: basename(repo), path: repo, trunk, detectedTrunk: detected, baseMissing: missing, remotes, worktrees };
   }));
   return data;
 }
@@ -534,7 +558,7 @@ function removingWorktree({ path, on }) {
   else removing.delete(norm(path));
 }
 
-const ops = { snapshot, findWorktree, touch, archiveByIds, invalidateRepo, orphans, removingWorktree, sessionBases };
+const ops = { snapshot, findWorktree, touch, archiveByIds, invalidateRepo, orphans, removingWorktree, sessionBases, projectBases };
 
 parentPort.on('message', async ({ id, op, arg }) => {
   try {

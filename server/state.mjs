@@ -1,4 +1,4 @@
-// Gyro's own small persistent state (closed projects, GitHub links, dev commands, port leases), in ~/.claude/gyro/state.json.
+// Gyro's own small persistent state (closed projects, GitHub links, dev commands, base branches, port leases), in ~/.claude/gyro/state.json.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { DATA_DIR } from './data-dir.mjs';
 import { dirname, join } from 'node:path';
@@ -15,10 +15,11 @@ function load() {
       closedProjects: Array.isArray(s.closedProjects) ? s.closedProjects : [],
       github: s.github && typeof s.github === 'object' ? s.github : {},
       dev: s.dev && typeof s.dev === 'object' ? s.dev : {},
+      base: s.base && typeof s.base === 'object' ? s.base : {},
       ports: s.ports && typeof s.ports === 'object' ? s.ports : {},
     };
   } catch {
-    return { closedProjects: [], github: {}, dev: {}, ports: {} };
+    return { closedProjects: [], github: {}, dev: {}, base: {}, ports: {} };
   }
 }
 
@@ -72,5 +73,22 @@ export function setPorts(ports) {
 export function setDev(path, command) {
   const { [norm(path)]: _, ...rest } = state.dev;
   state = { ...state, dev: command === null ? rest : { ...rest, [norm(path)]: command } };
+  save();
+}
+
+/** All set base branches: { normalized repo path: ref }. */
+export function allBases() {
+  return state.base;
+}
+
+/** The project's base branch as set in Gyro (a ref like origin/develop), or undefined to detect the trunk. */
+export function getBase(path) {
+  return state.base[norm(path)];
+}
+
+/** Set the project's base branch, or go back to detecting the trunk with null. */
+export function setBase(path, ref) {
+  const { [norm(path)]: _, ...rest } = state.base;
+  state = { ...state, base: ref === null ? rest : { ...rest, [norm(path)]: ref } };
   save();
 }
