@@ -32,7 +32,7 @@ export function workingEntries(files: ChangedFile[]): { file: string; view: Diff
   ];
 }
 
-export type PanelTab = 'session' | 'git' | 'pr';
+export type PanelTab = 'session' | 'agent' | 'git' | 'pr';
 
 /** A header preset that gives one of the four quadrants most of the screen. */
 export type QuickLayout = 'tiles' | 'detail' | 'terminal' | 'preview';
@@ -41,7 +41,7 @@ const QUICK_LAYOUTS: readonly string[] = ['tiles', 'detail', 'terminal', 'previe
 function loadPanelTab(): PanelTab {
   try {
     const t = localStorage.getItem(PANEL_TAB_KEY);
-    return t === 'git' || t === 'pr' ? t : 'session';
+    return t === 'agent' || t === 'git' || t === 'pr' ? t : 'session';
   } catch {
     return 'session';
   }

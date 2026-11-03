@@ -2,20 +2,12 @@ import { Component, computed, inject, input, signal } from '@angular/core';
 import { DashboardService } from './dashboard.service';
 import { StepList } from './step-list';
 import { TeardownCard } from './teardown-card';
-import { WorkStage, WorkStepKey, Worktree } from './model';
+import { WorkStepKey, Worktree } from './model';
 
-export const STAGE_LABEL: Record<WorkStage, string> = {
-  'setup': 'setting up',
-  'working': 'working',
-  'ready-to-ship': 'ready to ship',
-  'in-review': 'in review',
-  'ready-to-land': 'ready to land',
-  'landing': 'landing',
-  'done': 'done',
-};
+const LAND_KEYS: ReadonlySet<string> = new Set(['merge', 'teardown', 'archive']);
 
 /**
- * A work session's lifecycle: stage pill, the step checklist (each row doubles as a manual knob),
+ * A work session's lifecycle: the step checklist (each row doubles as a manual knob),
  * and the two macros. Ship it runs commit → sync → push → PR and stops there for review; Land it
  * (merge → teardown → archive) stays disabled until the PR is clean AND the branch is current with
  * its base, and confirms through the teardown card first.
@@ -27,28 +19,13 @@ export const STAGE_LABEL: Record<WorkStage, string> = {
     @let w = wt();
     @if (w.work?.plan; as p) {
       <section class="plan" aria-label="Session lifecycle">
-        <div class="head">
-          <span [class]="'stage ' + p.stage">{{ stageLabel[p.stage] }}</span>
-          @for (b of p.badges; track b) { <span [class]="'badge ' + b" [title]="p.blockedReason ?? ''">{{ b }}</span> }
-          <span class="spacer"></span>
-          @if (shipLeft() && p.stage !== 'ready-to-land' && p.stage !== 'landing' && p.stage !== 'done') {
-            <button type="button" class="cta" (click)="api.ship(w.path)" [disabled]="busy() || working() || p.stage === 'setup'"
-                    [title]="p.stage === 'setup' ? 'Nothing to ship yet — no changes or commits in this worktree'
-                      : working() ? 'Wait until the work here finishes (the tile is still green)'
-                      : 'Commit leftovers, rebase if behind, push, and open a PR — then stop for your review'">
-              {{ busy() ? 'Working…' : 'Ship it' }}
-            </button>
-          } @else if (p.stage !== 'done') {
-            <button type="button" class="cta" (click)="landing.set(true)" [disabled]="busy() || p.stage !== 'ready-to-land'"
-                    [title]="p.stage === 'ready-to-land' ? 'Merge the PR, remove the worktree, archive the session' : 'Enabled once the PR is clean and the branch is up to date with ' + w.work!.session.base">
-              {{ p.stage === 'landing' ? 'Landing…' : 'Land it' }}
-            </button>
-          }
-        </div>
+        @if (p.badges.length) {
+          <div class="badges">
+            @for (b of p.badges; track b) { <span [class]="'badge ' + b" [title]="p.blockedReason ?? ''">{{ b }}</span> }
+          </div>
+        }
 
-        @if (landing()) {
-          <app-teardown-card [wt]="w" [land]="true" (confirm)="land($event)" (cancel)="landing.set(false)" />
-        } @else if (macroShown(); as m) {
+        @if (macroShown(); as m) {
           <div class="macro" [class.failed]="m.status === 'failed'">
             <div class="m-head">
               <span>{{ m.macro === 'ship' ? 'Ship it' : m.macro === 'land' ? 'Land it' : 'Step' }}
@@ -61,7 +38,39 @@ export const STAGE_LABEL: Record<WorkStage, string> = {
             @if (m.error) { <p class="err" role="alert">{{ m.error }}</p> }
           </div>
         } @else {
-          <app-step-list [steps]="p.steps" [runnable]="runnable()" [runDisabled]="busy() || working()" (run)="runStep($event)" />
+          @let canShip = shipLeft() && p.stage !== 'ready-to-land' && p.stage !== 'landing' && p.stage !== 'done';
+          <section class="group" aria-labelledby="ship-h">
+            <div class="g-head">
+              <h3 id="ship-h">Ship</h3>
+              <button type="button" class="btn" [class.due]="canShip" (click)="api.ship(w.path)"
+                      [disabled]="!canShip || busy() || working() || p.stage === 'setup'"
+                      [title]="!canShip ? 'Shipped: the PR is open'
+                        : p.stage === 'setup' ? 'Nothing to ship yet — no changes or commits in this worktree'
+                        : working() ? 'Wait until the work here finishes (the tile is still green)'
+                        : 'Commit leftovers, rebase if behind, push, and open a PR — then stop for your review'">
+                {{ busy() && canShip ? 'Working…' : 'Ship it' }}
+              </button>
+            </div>
+            <app-step-list [steps]="shipSteps()" [quietDone]="true" [runnable]="runnable()" [runDisabled]="busy() || working()" (run)="runStep($event)" />
+          </section>
+
+          <section class="group" aria-labelledby="land-h">
+            <div class="g-head">
+              <h3 id="land-h">Land</h3>
+              @if (p.stage !== 'done') {
+                <button type="button" class="btn" [class.due]="p.stage === 'ready-to-land'" (click)="landing.set(true)"
+                        [disabled]="busy() || p.stage !== 'ready-to-land'"
+                        [title]="p.stage === 'ready-to-land' ? 'Merge the PR, remove the worktree, archive the session' : 'Enabled once the PR is clean and the branch is up to date with ' + w.work!.session.base">
+                  {{ p.stage === 'landing' ? 'Landing…' : 'Land it' }}
+                </button>
+              }
+            </div>
+            @if (landing()) {
+              <app-teardown-card [wt]="w" [land]="true" (confirm)="land($event)" (cancel)="landing.set(false)" />
+            } @else {
+              <app-step-list [steps]="landSteps()" [quietDone]="true" [runnable]="runnable()" [runDisabled]="busy() || working()" (run)="runStep($event)" />
+            }
+          </section>
         }
       </section>
     }
@@ -70,14 +79,27 @@ export const STAGE_LABEL: Record<WorkStage, string> = {
     /* The parent sets the inset: none inside the session card, 12px when it sits on its own. */
     :host { display: block; flex: none; }
     :host(.top) { padding: 12px 12px 0; }
-    .plan { display: grid; gap: 6px; }
-    .head { display: flex; align-items: center; gap: 6px; }
-    .spacer { flex: 1; }
-    .stage { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-2); white-space: nowrap; }
-    .stage.ready-to-ship, .stage.ready-to-land { color: var(--accent); border-color: var(--accent); }
-    .stage.landing { color: var(--accent); }
-    .stage.done { color: var(--muted); }
+    .plan { display: grid; gap: 10px; }
+    .badges { display: flex; gap: 6px; }
+    .group { display: grid; gap: 4px; }
+    .group + .group { padding-top: 10px; border-top: 1px solid var(--border); }
+    .g-head { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+    .g-head h3 { flex: 1; margin: 0; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+    /* Both groups share one name width (it also holds the ready step's context), so their columns line up as one list. */
+    app-step-list { --step-name-col: 22ch; }
     .badge { font-size: 11px; color: var(--muted); }
+    /* Same raised button as the Git tab's actions; "due" = the step this plan is waiting on. */
+    .btn {
+      display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px;
+      font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+      color: var(--text); background: var(--panel);
+      border: 1px solid var(--border); border-radius: 5px; box-shadow: 0 1px 0 var(--border);
+    }
+    .btn.due:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--hover); }
+    .btn:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .btn:disabled { cursor: default; color: var(--muted); box-shadow: none; }
     .badge.blocked { color: var(--danger); }
     .macro { display: grid; gap: 4px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
     .macro.failed { border-color: var(--danger); }
@@ -89,7 +111,6 @@ export class WorkPlan {
   readonly wt = input.required<Worktree>();
 
   protected readonly api = inject(DashboardService);
-  protected readonly stageLabel = STAGE_LABEL;
   /** The Land it confirmation (teardown card in land mode) is open. */
   protected readonly landing = signal(false);
   /** startedAt of the finished macro run the user dismissed. */
@@ -99,11 +120,12 @@ export class WorkPlan {
   /** The tile is green (Claude mid-turn, a session booting, checks running): shipping now would catch half-done work. */
   protected readonly working = computed(() => this.api.worktreeState(this.wt()) === 'busy');
 
+  /** Ship it covers commit…pr; Land it covers merge → teardown → archive. */
+  protected readonly shipSteps = computed(() => (this.wt().work?.plan?.steps ?? []).filter((s) => !LAND_KEYS.has(s.key)));
+  protected readonly landSteps = computed(() => (this.wt().work?.plan?.steps ?? []).filter((s) => LAND_KEYS.has(s.key)));
+
   /** Ship's half (commit…pr) isn't finished: the primary action is Ship it. */
-  protected readonly shipLeft = computed(() => {
-    const steps = this.wt().work?.plan?.steps ?? [];
-    return steps.some((s) => s.key !== 'merge' && s.key !== 'teardown' && s.key !== 'archive' && s.status !== 'done' && s.status !== 'skipped');
-  });
+  protected readonly shipLeft = computed(() => this.shipSteps().some((s) => s.status !== 'done' && s.status !== 'skipped'));
 
   /** The latest macro run, while it runs and until its outcome is dismissed. */
   protected readonly macroShown = computed(() => {

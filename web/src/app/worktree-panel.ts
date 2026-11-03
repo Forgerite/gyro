@@ -25,16 +25,10 @@ export type OpenRequest = {
   template: `
     @let w = wt();
     <header>
-      <nav class="crumb" aria-label="Breadcrumb">
-        <button type="button" class="link up" (click)="up.emit()" title="Back to project (u)">{{ ws().name }}</button> ›
-      </nav>
-      <h2>{{ w.name }} @if (w.branch && w.branch !== w.name) { <span class="branch">{{ w.branch }}</span> }</h2>
-      <div class="git">
-        @if (w.git.dirty) { <span class="dirty">● {{ w.git.dirty }} uncommitted</span> }
-        @if (w.git.unmerged) { <span class="unmerged" [title]="'vs ' + w.git.trunk">◆ {{ w.git.unmerged }} unmerged</span> }
-        @if (w.ports; as p) {
-          <span class="ports" [title]="'Leased to this worktree. Its processes get GYRO_PORT_BASE=' + p.base + ' and GYRO_PORT_COUNT=' + p.count + '; the dev server also gets PORT=' + p.base + '.'">ports {{ p.base }}–{{ p.base + p.count - 1 }}</span>
-        }
+      <h2>
+        <button type="button" class="link up" (click)="up.emit()" title="Back to project (u)">{{ ws().name }}</button>
+        <span class="sep" aria-hidden="true">›</span>
+        <span class="title">{{ w.name }} @if (w.branch && w.branch !== w.name) { <span class="branch">{{ w.branch }}</span> }</span>
         <span class="acts">
           <button type="button" class="act" (click)="open.emit({ action: 'code' })" title="Open in VS Code (c)">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4" /></svg>VS Code
@@ -43,14 +37,12 @@ export type OpenRequest = {
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4.5v8h13v-6.5h-6.5l-1.5-1.5z" /></svg>Folder
           </button>
         </span>
-      </div>
-      @if (liveCount() > 1) {
-        <div class="warn" role="status">{{ liveCount() }} sessions are live in this worktree. Consider closing all but one.</div>
-      }
+      </h2>
     </header>
 
     <div class="tabs" role="tablist" aria-label="Worktree views">
       <button type="button" role="tab" [attr.aria-selected]="tab() === 'session'" (click)="api.setPanelTab('session')">Session</button>
+      <button type="button" role="tab" [attr.aria-selected]="tab() === 'agent'" (click)="api.setPanelTab('agent')" title="Claude's model, latest exchange and session id">Agent</button>
       <button type="button" role="tab" [attr.aria-selected]="tab() === 'git'" (click)="api.setPanelTab('git')" title="Git (g)">
         Git <app-wt-flags [git]="w.git" />
       </button>
@@ -74,37 +66,54 @@ export type OpenRequest = {
       <app-git-tab [wt]="w" [now]="now()" />
     } @else if (tab() === 'pr') {
       <app-pr-tab [wt]="w" [ws]="ws()" />
+    } @else if (tab() === 'agent') {
+      @if (shown(); as s) {
+        @let state = stateOf(s);
+        <section class="session" [class]="state" aria-label="Agent">
+          <ng-container [ngTemplateOutlet]="earlierBanner" [ngTemplateOutletContext]="{ s }" />
+          <div class="band" [class.live]="!!s.live">
+            <div class="s-head">
+              <span class="dot" role="img" [attr.aria-label]="label(s)"></span>
+              <span class="status">{{ label(s) }}</span>
+              <span class="muted">· {{ s.lastActivity | ago: now() }}</span>
+            </div>
+            <dl class="facts">
+              <div><dt>Model</dt><dd>{{ s.model ?? 'unknown' }}</dd></div>
+              @if (s.pr; as p) { <div><dt>PR</dt><dd><a [href]="p.url" target="_blank" rel="noopener">#{{ p.number }}</a></dd></div> }
+              <div>
+                <dt>Session</dt>
+                <dd><code class="sid" [title]="s.id">{{ s.id }}</code> <button type="button" class="link" (click)="copy(s)">copy id</button></dd>
+              </div>
+            </dl>
+          </div>
+          <div class="convo">
+            @if (s.lastUser) { <div class="msg user"><span class="who">you</span>{{ s.lastUser }}</div> }
+            @if (s.lastAssistant) { <div class="msg"><span class="who">claude</span>{{ s.lastAssistant }}</div> }
+            @if (s.lastRole === 'tool' && state === 'busy') { <div class="tool">running {{ s.lastTool }}…</div> }
+            @if (!s.lastUser && !s.lastAssistant) { <p class="muted">No messages yet.</p> }
+          </div>
+        </section>
+        @if (!running()) {
+          <footer>
+            <span class="spacer"></span>
+            <button type="button" class="link" (click)="open.emit({ action: 'term' })" title="Starts a second session in this worktree">
+              start fresh
+            </button>
+          </footer>
+        }
+      } @else {
+        <section class="session empty-state"><p>No Claude session in this worktree yet.</p></section>
+      }
     } @else if (tearingDown()) {
       <app-teardown-card [wt]="w" (done)="archived($event)" (cancel)="setTearingDown(false)" />
     } @else {
     @if (shown(); as s) {
       @let state = stateOf(s);
       <section class="session" [class]="state" aria-label="Session">
-        @if (s.id !== current()?.id) {
-          <div class="banner">
-            Earlier session · {{ s.lastActivity | ago: now() }} ago
-            <button type="button" class="link" (click)="view(null)">← back to current</button>
-          </div>
-        }
-        <div class="band" [class.live]="!!s.live">
-          <div class="s-head">
-            <span class="dot" role="img" [attr.aria-label]="label(s)"></span>
-            <h3>{{ s.title ?? 'Untitled session' }}</h3>
-          </div>
-          <div class="meta">
-            <span class="status">{{ label(s) }}</span> · {{ s.lastActivity | ago: now() }}
-            @if (s.model) { · {{ s.model }} }
-            @if (s.pr) { · <a [href]="s.pr.url" target="_blank" rel="noopener">PR #{{ s.pr.number }}</a> }
-          </div>
-        </div>
+        <ng-container [ngTemplateOutlet]="earlierBanner" [ngTemplateOutletContext]="{ s }" />
 
         <app-work-plan [wt]="w" />
-
-        <div class="convo">
-          @if (s.lastUser) { <div class="msg user"><span class="who">you</span>{{ s.lastUser }}</div> }
-          @if (s.lastAssistant) { <div class="msg"><span class="who">claude</span>{{ s.lastAssistant }}</div> }
-          @if (s.lastRole === 'tool' && state === 'busy') { <div class="tool">running {{ s.lastTool }}…</div> }
-        </div>
+        <span class="spacer"></span>
 
         <div class="primary">
           @if (running()) {
@@ -146,27 +155,11 @@ export type OpenRequest = {
       </section>
     }
 
-    <ng-template #archiveBtn>
-      <button type="button" class="arch-btn" (click)="setTearingDown(true)"
-              [title]="w.isMain ? 'Archive this checkout\\'s sessions' : 'Archive sessions and remove this worktree'">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12v3H2zM3 6.5v6h10v-6M6.5 9h3" /></svg>Archive
-      </button>
-    </ng-template>
-
-    @if (current()) {
+    @if (earlier().length) {
       <footer>
-        @if (earlier().length) {
-          <button type="button" class="link" [attr.aria-expanded]="historyOpen()" (click)="toggleHistory()">
-            {{ historyOpen() ? '▾' : '▸' }} {{ earlier().length }} earlier
-          </button>
-        }
-        <span class="spacer"></span>
-        <button type="button" class="link" (click)="copy(shown()!)">copy id</button>
-        @if (!running()) {
-          <button type="button" class="link" (click)="open.emit({ action: 'term' })" title="Starts a second session in this worktree">
-            start fresh
-          </button>
-        }
+        <button type="button" class="link" [attr.aria-expanded]="historyOpen()" (click)="toggleHistory()">
+          {{ historyOpen() ? '▾' : '▸' }} {{ earlier().length }} earlier
+        </button>
       </footer>
       @if (historyOpen()) {
         <ul class="history" aria-label="Earlier sessions">
@@ -182,6 +175,22 @@ export type OpenRequest = {
       }
     }
     }
+
+    <ng-template #earlierBanner let-s="s">
+      @if (s.id !== current()?.id) {
+        <div class="banner">
+          Earlier session · {{ s.lastActivity | ago: now() }} ago
+          <button type="button" class="link" (click)="view(null)">← back to current</button>
+        </div>
+      }
+    </ng-template>
+
+    <ng-template #archiveBtn>
+      <button type="button" class="arch-btn" (click)="setTearingDown(true)"
+              [title]="w.isMain ? 'Archive this checkout\\'s sessions' : 'Archive sessions and remove this worktree'">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12v3H2zM3 6.5v6h10v-6M6.5 9h3" /></svg>Archive
+      </button>
+    </ng-template>
   `,
   styleUrl: './worktree-panel.css',
 })
@@ -248,7 +257,6 @@ export class WorktreePanel {
     return !!st && !st.failed;
   });
   protected readonly running = computed(() => this.booting() || (!!this.term() && !this.term()!.exited));
-  protected readonly liveCount = computed(() => this.wt().sessions.filter((s) => s.live).length);
 
   /** A session still booting in the dock counts as working. */
   protected stateOf(s: Session) {
