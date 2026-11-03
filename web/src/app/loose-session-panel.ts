@@ -16,12 +16,10 @@ import { OpenRequest } from './worktree-panel';
     @let s = session();
     @let state = stateOf();
     <header>
-      <nav class="crumb" aria-label="Breadcrumb">
-        <button type="button" class="link up" (click)="up.emit()" title="Back to project (u)">{{ ws().name }}</button> › loose session
-      </nav>
-      <h2>{{ s.worktreeName }}</h2>
-      <div class="git">
-        <span class="gone">{{ s.folderExists ? 'Folder is still here, but it is no longer a git worktree' : 'Worktree and folder were removed' }}</span>
+      <h2>
+        <button type="button" class="link up" (click)="up.emit()" title="Back to project (u)">{{ ws().name }}</button>
+        <span class="sep" aria-hidden="true">›</span>
+        <span class="title">{{ s.worktreeName }} <span class="branch">loose session</span></span>
         @if (s.folderExists) {
           <span class="acts">
             <button type="button" class="act" (click)="open.emit({ action: 'code' })" title="Open in VS Code (c)">
@@ -32,7 +30,7 @@ import { OpenRequest } from './worktree-panel';
             </button>
           </span>
         }
-      </div>
+      </h2>
     </header>
 
     <section class="session" [class]="state" aria-label="Session">
