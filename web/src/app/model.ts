@@ -43,6 +43,8 @@ export interface GitStatus {
   behindBase?: number | null;
   /** The branch's upstream, for push-ness; null when none is set. */
   upstream?: { exists: boolean; ahead: number; behind: number } | null;
+  /** The branch a rebase in progress is replaying (HEAD is detached meanwhile); null when not rebasing. */
+  rebasing?: string | null;
   lastCommitAt: number | null;
   lastCommitSubject: string | null;
 }
@@ -62,7 +64,7 @@ export interface Worktree {
   ports?: PortBlock | null;
   sessions: Session[];
   lastActivity: number;
-  /** Its work session (the persistent unit of work; null for main/detached/prunable worktrees). */
+  /** Its work session (the persistent unit of work; null for main/prunable worktrees and a detached HEAD outside a rebase). */
   work?: WorkView | null;
 }
 

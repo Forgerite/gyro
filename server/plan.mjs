@@ -25,18 +25,27 @@ export function evaluatePlan({ wt, session, prState, macro }) {
   const abnormal = [];
   const hasCommits = (git.unmerged ?? 0) > 0;
 
+  // Mid-rebase HEAD sits on top of base, so `behind` reads 0: the rebase itself says where sync is.
+  // Its conflicted, half-replayed tree is no state to commit or push.
+  const rebasing = !!git.rebasing;
+  const rebaseRunning = rebasing && macro?.status === 'running' && macro.step === 'sync';
+
   // A clean tree only counts as committed once there's a commit beyond base; untouched is "nothing yet".
-  if (git.dirty) put('commit', 'pending', `${git.dirty} uncommitted file${git.dirty === 1 ? '' : 's'}`);
+  if (rebasing) put('commit', 'blocked', 'finish the rebase first');
+  else if (git.dirty) put('commit', 'pending', `${git.dirty} uncommitted file${git.dirty === 1 ? '' : 's'}`);
   else if (hasCommits) put('commit', 'done');
   else put('commit', 'blocked', 'no changes yet');
 
   // Done while on top of base; pending (rebase runnable) only once base has moved ahead.
-  if (behind === null) { put('sync', 'blocked', `base ${session.base} not found (deleted or renamed?)`); abnormal.push('sync'); }
+  if (rebaseRunning) put('sync', 'running', `rebasing onto ${git.baseRef ?? session.base}…`);
+  else if (rebasing) { put('sync', 'blocked', 'rebase stopped partway; finish (git rebase --continue) or abort it in the terminal'); abnormal.push('sync'); }
+  else if (behind === null) { put('sync', 'blocked', `base ${session.base} not found (deleted or renamed?)`); abnormal.push('sync'); }
   else if (behind > 0) put('sync', 'pending', `${behind} commit${behind === 1 ? '' : 's'} behind ${git.baseRef ?? session.base}`);
   else put('sync', 'done', `up to date with ${git.baseRef ?? session.base}`);
 
   const up = git.upstream;
-  if (up?.exists && up.ahead > 0 && up.behind > 0) { put('push', 'blocked', 'diverged from upstream; resolve in the Git tab'); abnormal.push('push'); }
+  if (rebasing) put('push', 'blocked', 'finish the rebase first');
+  else if (up?.exists && up.ahead > 0 && up.behind > 0) { put('push', 'blocked', 'diverged from upstream; resolve in the Git tab'); abnormal.push('push'); }
   else if (up?.exists && up.ahead === 0) put('push', 'done');
   else if (!up?.exists && !hasCommits) put('push', 'blocked', git.dirty ? 'commit your changes first' : 'nothing to publish yet');
   else put('push', 'pending', up?.ahead ? `${up.ahead} commit${up.ahead === 1 ? '' : 's'} to push` : 'branch not published yet');

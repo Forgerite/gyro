@@ -93,6 +93,22 @@ function sessionBases(list) {
   sessionBaseMap = next;
 }
 
+/** The branch a rebase in progress here is replaying (HEAD is detached meanwhile), else null. Plain file reads, no git spawn. */
+async function rebasingBranch(path) {
+  try {
+    const dotGit = join(path, '.git');
+    // A linked worktree's .git is a file pointing at its git dir; the main worktree's is the dir itself.
+    const gitDir = (await stat(dotGit)).isDirectory()
+      ? dotGit
+      : resolve(path, (await readFile(dotGit, 'utf8')).match(/^gitdir:\s*(.+)$/m)?.[1].trim() ?? '');
+    for (const dir of ['rebase-merge', 'rebase-apply']) {
+      const head = await readFile(join(gitDir, dir, 'head-name'), 'utf8').catch(() => null);
+      if (head) return head.trim().replace(/^refs\/heads\//, '');
+    }
+  } catch { /* no git dir: not rebasing */ }
+  return null;
+}
+
 async function worktreeStatus(path, trunk) {
   if (removing.has(norm(path))) return statusCache.get(norm(path))?.git ?? { missing: true };
   try {
@@ -122,6 +138,7 @@ async function worktreeStatus(path, trunk) {
       baseRef,
       behindBase,
       upstream,
+      rebasing: await rebasingBranch(path),
       lastCommitAt: Number(lastCommit[0]) * 1000 || null,
       lastCommitSubject: lastCommit[1] || null,
     };
@@ -377,10 +394,11 @@ async function scanWorkspaces() {
       const key = norm(wt.path);
       const cached = statusCache.get(key);
       const ttl = hotPaths.has(key) || cached?.git.dirty ? HOT_TTL : COLD_TTL;
-      if (cached && Date.now() - cached.at < ttl) wt.git = cached.git;
+      // HEAD detaching or reattaching (a rebase starting or ending) makes the cached status stale.
+      if (cached && Date.now() - cached.at < ttl && cached.detached === wt.detached) wt.git = cached.git;
       else {
         wt.git = await worktreeStatus(wt.path, trunk);
-        statusCache.set(key, { at: Date.now(), git: wt.git });
+        statusCache.set(key, { at: Date.now(), git: wt.git, detached: wt.detached });
       }
     }));
     // trunk: what work branches from and PRs into. detectedTrunk: what git alone says. baseMissing: a set base that no longer resolves.

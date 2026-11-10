@@ -1,6 +1,6 @@
-// Smart feature: "Auto rebase". Headless claude stashes uncommitted work, rebases the worktree's
-// branch onto trunk, reapplies the stash and resolves any conflicts along the way. Gyro fetches
-// first, keeps backup refs so nothing can be lost, and checks the result afterwards.
+// Smart feature: "Auto rebase". Gyro fetches, keeps backup refs so nothing can be lost, and squashes
+// the branch to one commit; then headless claude stashes uncommitted work, rebases onto trunk,
+// reapplies the stash and resolves any conflicts along the way. Gyro checks the result afterwards.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -51,6 +51,30 @@ function prompt({ branch, trunk, stashMsg, dirty }) {
   ].join('\n');
 }
 
+/**
+ * Fold the branch's commits since it left trunk into one, so the rebase replays (and resolves
+ * conflicts for) a single commit. Branch history isn't kept; the backup ref still has it.
+ * The new commit has HEAD's exact tree, so the index and working tree are untouched.
+ * Returns how many commits were folded (0 when there was nothing to fold).
+ */
+async function squash(path, branch, trunkSha, head) {
+  const base = await tryGit(path, 'merge-base', head, trunkSha);
+  if (!base) return 0;
+  const subjects = (await git(path, 'log', '--reverse', '--no-merges', '--format=%s', `${base}..${head}`)).split(/\r?\n/).filter(Boolean);
+  const total = Number(await git(path, 'rev-list', '--count', `${base}..${head}`));
+  if (total < 2) return 0;
+  const message = [
+    subjects[0] ?? `Work on ${branch}`,
+    '',
+    `Squashed from ${total} commits on ${branch}:`,
+    ...subjects.map((s) => `- ${s}`),
+  ].join('\n');
+  const one = await git(path, 'commit-tree', `${head}^{tree}`, '-p', base, '-m', message);
+  // Only if the branch hasn't moved since we looked.
+  await git(path, 'update-ref', '-m', `gyro: squash ${total} commits before rebase`, `refs/heads/${branch}`, one, head);
+  return total;
+}
+
 /** Rebase `path`'s branch onto `trunk`. Resolves with what happened, including any problems left behind. */
 export function autoRebase({ path, trunk }) {
   return withLock(path, 'a rebase', async () => {
@@ -84,6 +108,7 @@ export function autoRebase({ path, trunk }) {
     await git(path, 'update-ref', `${backup}/head`, before);
     const wip = await tryGit(path, 'stash', 'create');
     if (wip) await git(path, 'update-ref', `${backup}/wip`, wip);
+    const squashed = await squash(path, branch, trunkSha, before);
     const dirty = !!(await git(path, 'status', '--porcelain'));
     const stashMsg = `gyro auto-rebase ${stamp}`;
 
@@ -118,6 +143,7 @@ export function autoRebase({ path, trunk }) {
       branch,
       trunk,
       commits,
+      squashed,
       moved: after !== before,
       summary: run.result?.result?.trim() || (problems.length ? whyFailed(run) : null),
       problems,

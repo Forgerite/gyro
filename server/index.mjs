@@ -108,10 +108,12 @@ function pushSessionBases() {
  * DB access stays on the main thread (the scanner must not touch it).
  */
 function workView(wt, ws, work) {
-  if (wt.isMain || wt.detached || wt.prunable || !wt.branch) return null;
+  // Mid-rebase HEAD is detached, but the work is still the branch's: keep the session (and its running macro) on show.
+  const branch = wt.branch ?? wt.git?.rebasing ?? null;
+  if (wt.isMain || wt.prunable || !branch) return null;
   let entry = work.get(norm(wt.path)) ?? null;
   if (!entry && wt.git?.trunk) {
-    const session = createWork({ path: wt.path, repo: ws.path, branch: wt.branch, base: wt.git.trunk, origin: 'backfill' });
+    const session = createWork({ path: wt.path, repo: ws.path, branch, base: wt.git.trunk, origin: 'backfill' });
     entry = { session, macro: null };
   }
   if (!entry) return null;
@@ -474,7 +476,8 @@ async function runWorkStep(found, session, step, opts) {
     }
     if (r.upToDate) return { skipped: true, note: `already on top of ${session.base}` };
     const fetched = r.fetchNote ? ` (${r.fetchNote})` : '';
-    return { note: `rebased ${r.commits} commit${r.commits === 1 ? '' : 's'} onto ${session.base}${fetched}` };
+    const folded = r.squashed ? `squashed ${r.squashed} commits into one and ` : '';
+    return { note: `${folded}rebased ${r.commits} commit${r.commits === 1 ? '' : 's'} onto ${session.base}${fetched}` };
   }
   if (step === 'push') {
     const note = await detail('gitAction', { path: wt, action: 'push' }).catch((e) => { throw httpError(409, e.message); });
