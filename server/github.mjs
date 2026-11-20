@@ -501,3 +501,50 @@ export async function moveEntry(project, id, optionId) {
   await ghJson(['api', 'graphql', '-f', `query=${mutation}`, '-f', `p=${e.projectId}`, '-f', `i=${e.id}`, '-f', `f=${e.fieldId}`, '-f', `o=${optionId}`]);
   return { ...e, statusId: optionId, updatedAt: Date.now() };
 }
+
+// ---------- an issue Nox Lumos works: its board Status, and comments ----------
+
+const ISSUE_ITEMS_QUERY = `query($id:ID!){ node(id:$id){ ... on Issue { number url repository{nameWithOwner}
+  projectItems(first:20){ nodes{ id isArchived
+    project{ number owner{ ... on Organization{login} ... on User{login} } }
+    status: fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }`;
+
+const ISSUE_ID = /^I_[A-Za-z0-9_-]{4,100}$/;
+
+/**
+ * The issue's entry on a GitHub Project, with that board's Status options: on `project` (the Gyro
+ * project's linked board) when it's there, else the board whose Status reads `statusName` (what Nox
+ * Lumos last saw), else its first board. `repo` must be the issue's repo, so a project can only ever
+ * touch its own tickets.
+ */
+export async function issueStatus(issueNodeId, { repo, project, statusName }) {
+  if (!ISSUE_ID.test(issueNodeId ?? '')) throw new Error('Bad issue id');
+  const n = (await ghJson(['api', 'graphql', '-f', `query=${ISSUE_ITEMS_QUERY}`, '-f', `id=${issueNodeId}`])).data?.node;
+  if (!n?.repository) throw new Error("That issue wasn't found");
+  if (n.repository.nameWithOwner.toLowerCase() !== repo.toLowerCase()) throw new Error(`That issue isn't one of ${repo}'s`);
+  const items = (n.projectItems?.nodes ?? []).filter((i) => !i.isArchived && i.project?.owner?.login);
+  const on = (p) => (i) => i.project.number === p.number && i.project.owner.login.toLowerCase() === p.owner.toLowerCase();
+  const item = (project && items.find(on(project))) ?? items.find((i) => i.status?.name === statusName) ?? items[0];
+  if (!item) return { itemId: null, project: null, options: [], statusId: null };
+  const board = { owner: item.project.owner.login, number: item.project.number };
+  const e = await projectEntry(board, item.id);
+  return { itemId: e.id, project: board, boardUrl: e.url, options: e.options, statusId: e.statusId };
+}
+
+/** Move the issue's card (see issueStatus for which board) to another Status column. */
+export async function moveIssue(issueNodeId, where, optionId) {
+  const s = await issueStatus(issueNodeId, where);
+  if (!s.itemId) throw new Error("The issue isn't on a GitHub Project");
+  const e = await moveEntry(s.project, s.itemId, optionId);
+  return { ...s, statusId: e.statusId };
+}
+
+/** Comment on the issue as whoever gh is signed in as. Returns the comment's URL. */
+export async function commentIssue(issueNodeId, repo, body) {
+  if (!ISSUE_ID.test(issueNodeId ?? '')) throw new Error('Bad issue id');
+  const n = (await ghJson(['api', 'graphql', '-f', `query=${ISSUE_ITEMS_QUERY}`, '-f', `id=${issueNodeId}`])).data?.node;
+  if (n?.repository?.nameWithOwner.toLowerCase() !== repo.toLowerCase()) throw new Error(`That issue isn't one of ${repo}'s`);
+  const mutation = `mutation($s:ID!,$b:String!){ addComment(input:{subjectId:$s,body:$b}){ commentEdge{ node{ url } } } }`;
+  const r = await ghJson(['api', 'graphql', '-f', `query=${mutation}`, '-f', `s=${issueNodeId}`, '-f', `b=${body}`]);
+  return r.data?.addComment?.commentEdge?.node?.url ?? null;
+}

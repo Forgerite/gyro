@@ -8,8 +8,8 @@ import { basename, join, resolve } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import { allBases, allNoxLinks, allNoxServers, getBase, getDev, getGithub, getNoxLink, getNoxServer, isClosed, setBase, setClosed, setDev, setGithub, setNoxLink, setNoxServer } from './state.mjs';
-import { STATUS_TTL, checkServer, forgetServer, keyPrefix, noxTickets, normalizeUrl, onReposChanged, pollServers, rememberStatus, serverStatus } from './nox.mjs';
-import { createRepo, entryBrief, githubOptions, githubOwners, mergePr, moveEntry, openPulls, prDetail, prForBranch, projectBoard, projectEntry, repoInfo, resolveLink, whyNotMergeable } from './github.mjs';
+import { STATUS_TTL, checkServer, forgetServer, keyPrefix, canPrompt, noxPrompt, noxTicketDetail, noxTickets, normalizeUrl, onReposChanged, pollServers, rememberStatus, serverStatus } from './nox.mjs';
+import { commentIssue, createRepo, entryBrief, issueStatus, moveIssue, githubOptions, githubOwners, mergePr, moveEntry, openPulls, prDetail, prForBranch, projectBoard, projectEntry, repoInfo, resolveLink, whyNotMergeable } from './github.mjs';
 import { findReports, serveReport } from './reports.mjs';
 import { attachLiveSocket } from './live.mjs';
 import { listRecordings, readFrame, recordingIndex } from './recordings.mjs';
@@ -207,7 +207,7 @@ function withNox(ws) {
   const server = link?.server && getNoxServer(link.server);
   if (!server) return null;
   const repo = link.repo ?? ws.github?.repo ?? null;
-  const view = { server: { id: server.id, name: server.name, url: server.url }, repo, auto: !!link.auto, at: null, tickets: null, error: null };
+  const view = { server: { id: server.id, name: server.name, url: server.url, canPrompt: canPrompt(server) }, repo, auto: !!link.auto, at: null, tickets: null, error: null };
   if (!repo) return { ...view, error: 'Link the project to its GitHub repo, or name the repo here, so Gyro knows which tickets are its' };
   if (ws.closed) return view;
   const repos = serverStatus(server).info?.repos;
@@ -346,6 +346,18 @@ async function knownProject(path) {
   const ws = snap.workspaces.find((w) => norm(w.path) === norm(path ?? ''));
   if (!ws) throw httpError(400, 'unknown project');
   return ws;
+}
+
+/**
+ * A ticket of a project linked to Nox Lumos: the project, its server, and the issue's node id. The
+ * repo check against the issue itself happens where it's touched (Lumos's detail, or GitHub).
+ */
+async function noxTicketOf(path, id) {
+  const ws = await knownProject(path);
+  const server = ws.nox?.server && getNoxServer(ws.nox.server.id);
+  if (!server || !ws.nox.repo) throw httpError(400, `${ws.name} isn't linked to a Nox Lumos server`);
+  if (typeof id !== 'string' || !id) throw httpError(400, 'Which ticket?');
+  return { ws, server, id };
 }
 
 /** Folders of loose sessions that still exist, keyed like worktreeIndex. */
@@ -949,6 +961,21 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && (req.url === '/api/nox/servers' || req.url === '/api/nox/servers?check=1')) {
       return send(res, 200, { servers: await noxServers({ check: req.url.endsWith('check=1') }) });
     }
+    if (req.method === 'GET' && req.url.startsWith('/api/nox/ticket/status?')) {
+      // The ticket's card on its GitHub Project, with the board's Status columns to move it between.
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const { ws, id } = await noxTicketOf(q.get('path'), q.get('id'));
+      const where = { repo: ws.nox.repo, project: getGithub(ws.path)?.project ?? null, statusName: q.get('status') };
+      return send(res, 200, await issueStatus(id, where).catch((e) => { throw httpError(502, e.message); }));
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/nox/ticket?')) {
+      // One of the project's tickets, as its linked server has it: only that server, only that repo's tickets.
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const { ws, server, id } = await noxTicketOf(q.get('path'), q.get('id'));
+      const detail = await noxTicketDetail(server, id).catch((e) => { throw httpError(502, `${server.name}: ${e.message}`); });
+      if (ws.nox.repo && detail.ticket?.repo?.toLowerCase() !== ws.nox.repo.toLowerCase()) throw httpError(400, `That ticket isn't one of ${ws.nox.repo}'s`);
+      return send(res, 200, { ...detail, at: Date.now() });
+    }
     if (req.method === 'GET' && req.url === '/api/github/owners') {
       // Not cached: it's asked once per New project panel, and a fresh gh sign-in should show up.
       return send(res, 200, await githubOwners().then((owners) => ({ owners, error: null }), (e) => ({ owners: [], error: e.message })));
@@ -1163,6 +1190,32 @@ const server = createServer(async (req, res) => {
         await scan('projectBases', allBases()); // rescans, so the reply already counts against the new base
         const fresh = await knownProject(ws.path);
         return send(res, 200, { base: fresh.base, trunk: fresh.trunk ?? null });
+      }
+      if (req.url === '/api/nox/ticket/move') {
+        // Moving the card is what Lumos listens for: a stage with a workflow starts a run on its own.
+        const { path, id: raw, status, from } = await readJson(req);
+        const { ws, id } = await noxTicketOf(path, raw);
+        const where = { repo: ws.nox.repo, project: getGithub(ws.path)?.project ?? null, statusName: from ?? null };
+        return send(res, 200, await moveIssue(id, where, status).catch((e) => { throw httpError(502, e.message); }));
+      }
+      if (req.url === '/api/nox/ticket/comment') {
+        const { path, id: raw, body } = await readJson(req);
+        const { ws, id } = await noxTicketOf(path, raw);
+        const text = typeof body === 'string' ? body.trim() : '';
+        if (!text) throw httpError(400, 'Write a comment first');
+        if (text.length > 65_000) throw httpError(400, 'That comment is longer than GitHub allows');
+        return send(res, 200, { url: await commentIssue(id, ws.nox.repo, text).catch((e) => { throw httpError(502, e.message); }) });
+      }
+      if (req.url === '/api/nox/ticket/prompt') {
+        const { path, id: raw, prompt } = await readJson(req);
+        const { ws, server, id } = await noxTicketOf(path, raw);
+        const text = typeof prompt === 'string' ? prompt.trim() : '';
+        if (!text) throw httpError(400, 'Write a prompt first');
+        // The server may run other repos too: only prompt a ticket that's this project's.
+        const known = await noxTicketDetail(server, id).catch((e) => { throw httpError(502, `${server.name}: ${e.message}`); });
+        if (known.ticket?.repo?.toLowerCase() !== ws.nox.repo.toLowerCase()) throw httpError(400, `That ticket isn't one of ${ws.nox.repo}'s`);
+        const r = await noxPrompt(server, id, text).catch((e) => { throw httpError(502, `${server.name}: ${e.message}`); });
+        return send(res, 200, r);
       }
       if (req.url === '/api/projects/nox') {
         const { path, server: id, repo } = await readJson(req);

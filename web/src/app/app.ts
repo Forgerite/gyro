@@ -11,6 +11,7 @@ import { LooseSessionPanel } from './loose-session-panel';
 import { Created, NewProjectPanel } from './new-project-panel';
 import { NoxService } from './nox.service';
 import { NoxServersPanel } from './nox-servers-panel';
+import { NoxTicketPanel } from './nox-ticket-panel';
 import { ProjectPanel } from './project-panel';
 import { OpenRequest, WorktreePanel } from './worktree-panel';
 import { SessionPick, WorkspaceCard } from './workspace-card';
@@ -39,7 +40,7 @@ const QUICK_LAYOUTS: readonly { id: QuickLayout; label: string; key: string; x: 
 @Component({
   selector: 'app-root',
   imports: [WorkspaceCard, ProjectPanel, WorktreePanel, LooseSessionPanel, BulkArchivePanel, NewProjectPanel,
-    NoxServersPanel, TerminalDock, DiffViewer, EntryView, AgoPipe],
+    NoxServersPanel, NoxTicketPanel, TerminalDock, DiffViewer, EntryView, AgoPipe],
   templateUrl: './app.html',
   styleUrl: './app.css',
   host: { '(document:keydown)': 'onKey($event)' },
@@ -50,6 +51,7 @@ export class App {
   private readonly chime = inject(ChimeService);
   private readonly filterInput = viewChild<ElementRef<HTMLInputElement>>('filterInput');
   private readonly dock = viewChild.required(TerminalDock);
+  private readonly ticketPanel = viewChild(NoxTicketPanel);
   protected readonly QUICK_LAYOUTS = QUICK_LAYOUTS;
 
   protected readonly filter = signal('');
@@ -116,6 +118,7 @@ export class App {
       ...ws.loose
         .filter((s) => s.live || this.now() - s.lastActivity < LOOSE_RECENT_MS || s.id === this.selected()?.path)
         .map((s) => ({ kind: 'session' as const, path: s.id })),
+      ...(ws.nox?.tickets ?? []).map((t) => ({ kind: 'ticket' as const, path: t.id, project: ws.path })),
     ]),
   );
 
@@ -126,6 +129,8 @@ export class App {
     for (const ws of this.api.snapshot()?.workspaces ?? []) {
       if (sel.kind === 'project') {
         if (ws.path === sel.path) return { kind: 'project' as const, ws };
+      } else if (sel.kind === 'ticket') {
+        if (ws.path === sel.project) return { kind: 'ticket' as const, ws, t: ws.nox?.tickets?.find((x) => x.id === sel.path) ?? null };
       } else if (sel.kind === 'session') {
         const s = ws.loose.find((x) => x.id === sel.path);
         if (s) return { kind: 'session' as const, ws, s };
@@ -147,6 +152,7 @@ export class App {
     if (!sel) return null;
     if (sel.kind === 'project') return sel.ws.path;
     if (sel.kind === 'session') return sel.s.folderExists ? (sel.s.cwd ?? null) : null;
+    if (sel.kind === 'ticket') return null;
     return sel.wt.path;
   });
 
@@ -228,6 +234,14 @@ export class App {
     this.selected.set({ kind: 'session', path: id });
   }
 
+  /** A Nox Lumos ticket row clicked: its panel takes the detail area, like a session's. */
+  protected selectTicket(project: string, id: string) {
+    this.multi.set([]);
+    this.creating.set(false);
+    this.nox.managing.set(false);
+    this.selected.set({ kind: 'ticket', path: id, project });
+  }
+
   /** Loose row clicked: plain selects it alone; Ctrl/Cmd toggles it in the multi-selection; Shift picks a range. */
   protected pickSession({ id, mode, order }: SessionPick) {
     const cur = this.selected();
@@ -261,7 +275,7 @@ export class App {
   /** Up from a worktree to its project. */
   protected up() {
     const sel = this.selection();
-    if (sel?.kind === 'worktree' || sel?.kind === 'session') this.selectProject(sel.ws.path);
+    if (sel && sel.kind !== 'project') this.selectProject(sel.ws.path);
   }
 
   /** Actions target the selected worktree, or the repo root (its main worktree) for a project. */
@@ -397,6 +411,7 @@ export class App {
     if (path) this.selectWorktree(path);
     const sel = this.selection();
     if (!sel) return;
+    if (sel.kind === 'ticket') return this.ticketPanel()?.openInLumos();
     if (sel.kind === 'session') {
       const t = this.selectedTerm();
       if (t && !t.exited) return this.api.showTerm(t.path);
@@ -417,7 +432,7 @@ export class App {
 
   protected onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement;
-    const typing = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+    const typing = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
     // Single handler for Ctrl+`, including from inside xterm (which only swallows the key).
     if (e.ctrlKey && (e.code === 'Backquote' || e.key === '`')) {
       this.toggleTerminal();
@@ -500,7 +515,7 @@ export class App {
         break;
       case 'Enter':
         // Panel buttons keep their native Enter; tile rows and headers get activate().
-        if (target.tagName === 'BUTTON' && !/^(w[ts]|ls)-/.test(target.id)) return;
+        if (target.tagName === 'BUTTON' && !/^(w[ts]|ls|nt)-/.test(target.id)) return;
         this.activate();
         break;
       case 'u':
@@ -542,7 +557,7 @@ export class App {
 }
 
 function idFor(sel: Selection) {
-  return ({ project: 'ws-', worktree: 'wt-', session: 'ls-' } as const)[sel.kind] + sel.path;
+  return ({ project: 'ws-', worktree: 'wt-', session: 'ls-', ticket: 'nt-' } as const)[sel.kind] + sel.path;
 }
 
 function clampDetail(w: number) {

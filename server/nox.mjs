@@ -12,6 +12,8 @@ const BOARD_TTL = 15_000;
 /** Also how often every server is polled for it, so repos added to a server get noticed. */
 export const STATUS_TTL = 60_000;
 export const REQUIRED_SCOPE = 'pipeline:read';
+/** Optional: lets Gyro queue a one-off prompt on a ticket. */
+export const PROMPT_SCOPE = 'tickets:prompt';
 
 /** "serverId|repo" -> { at, board, error, pending } */
 const boards = new Map();
@@ -34,17 +36,23 @@ export function normalizeUrl(raw) {
 /** Shown in place of the key: enough to match it against the key list in Nox Lumos. */
 export const keyPrefix = (key) => key.slice(0, 12);
 
-async function call({ url, key }, path) {
+async function call({ url, key }, path, body) {
   let res;
   try {
     res = await fetch(`${url}${path}`, {
-      headers: { accept: 'application/json', authorization: `Bearer ${key}` },
+      method: body ? 'POST' : 'GET',
+      headers: { accept: 'application/json', authorization: `Bearer ${key}`, ...(body && { 'content-type': 'application/json' }) },
+      ...(body && { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (e) {
     throw new Error(e.name === 'TimeoutError' ? `${url} didn't answer within ${TIMEOUT_MS / 1000}s` : `Couldn't reach ${url} (${e.cause?.code ?? e.message})`);
   }
   if (!res.ok) {
+    // Nest answers { message } for the 4xx it means (a too-long prompt, a ticket it doesn't know).
+    const said = await res.json().then((j) => (Array.isArray(j.message) ? j.message.join('; ') : j.message), () => null);
+    if (body && res.status === 403) throw new Error(`The API key can't run prompts: give it the ${PROMPT_SCOPE} scope in Nox Lumos`);
+    if (body && said && res.status !== 401) throw new Error(said);
     throw new Error(
       res.status === 401 ? 'Nox Lumos turned the API key away (wrong, revoked, or its user was removed)'
         : res.status === 403 ? `The API key isn't allowed to read the board: give it the ${REQUIRED_SCOPE} scope`
@@ -74,6 +82,8 @@ export async function checkServer(server) {
     keyName: me.key?.name ?? null,
     auth: me.auth ?? null,
     scopes: me.key?.scopes ?? me.permissions,
+    /** What the key may actually do: its scopes, as far as its user still holds them. */
+    permissions: Array.isArray(me.permissions) ? me.permissions : [],
     repos: Array.isArray(pipeline.repos) ? pipeline.repos : [],
   };
 }
@@ -177,4 +187,27 @@ export function noxTickets(server, repo) {
     })))
     .sort((a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting') || b.updatedAt - a.updatedAt);
   return { ...base, tickets };
+}
+
+/**
+ * Everything Lumos knows about one ticket: its runs (newest first), the prompts it gave Claude and what came
+ * back, what each run concluded, and the trail. Not cached: it's asked for while the ticket's panel is open.
+ */
+export function noxTicketDetail(server, issueNodeId) {
+  return call(server, `/api/board/tickets/${encodeURIComponent(issueNodeId)}`);
+}
+
+/**
+ * Queue a one-off prompt on a ticket. Lumos runs Claude with what the ticket's stage would get (the
+ * ticket, its thread, the stage's instructions, its PR branch) and posts the answer on the issue.
+ * Resolves to the delivery id the run shows under in the ticket's detail.
+ */
+export function noxPrompt(server, issueNodeId, prompt) {
+  return call(server, `/api/board/tickets/${encodeURIComponent(issueNodeId)}/prompt`, { prompt });
+}
+
+/** Whether the server's key may queue prompts: true, false, or null while unknown. */
+export function canPrompt(server) {
+  const info = serverStatus(server).info;
+  return info ? (info.permissions ?? []).includes(PROMPT_SCOPE) : null;
 }
