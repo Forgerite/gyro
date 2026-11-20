@@ -1,12 +1,14 @@
-import { Component, computed, input, output, signal } from '@angular/core';
+import { Component, computed, inject, input, output, signal } from '@angular/core';
 import { AgoPipe } from './ago.pipe';
 import { BaseSection } from './base-section';
 import { BoardSection } from './board-section';
+import { DashboardService } from './dashboard.service';
 import { DevSection } from './dev-section';
 import { GithubSection } from './github-section';
 import { GyroSection } from './gyro-section';
 import { NewSession, NewSessionForm } from './new-session';
 import { NoxSection } from './nox-section';
+import { NoxStartForm, NoxStarted } from './nox-start';
 import { PullsSection } from './pulls-section';
 import { WtFlags } from './wt-flags';
 import { Session, Workspace, sessionState } from './model';
@@ -14,7 +16,7 @@ import { OpenRequest } from './worktree-panel';
 
 @Component({
   selector: 'app-project-panel',
-  imports: [AgoPipe, BaseSection, BoardSection, DevSection, GithubSection, GyroSection, NewSessionForm, NoxSection, PullsSection, WtFlags],
+  imports: [AgoPipe, BaseSection, BoardSection, DevSection, GithubSection, GyroSection, NewSessionForm, NoxSection, NoxStartForm, PullsSection, WtFlags],
   template: `
     @let p = ws();
     <header>
@@ -34,6 +36,10 @@ import { OpenRequest } from './worktree-panel';
       <div class="actions">
         @if (!p.closed) {
           <button type="button" class="primary" (click)="newing.set(true)" [attr.aria-expanded]="newing()" title="Start a session in a new worktree">New session</button>
+          @if (p.nox?.repo) {
+            <button type="button" (click)="noxStarting.set(true); noxStarted.set(null)" [attr.aria-expanded]="noxStarting()"
+                    title="Pick a Backlog issue and move it to Ready for Analysis, where Nox Lumos picks it up">Start Lumos ticket</button>
+          }
         }
         @if (!p.closed && (!p.gyro || p.gyro.status === 'failed')) {
           <button type="button" (click)="gyroing.set(true)" [attr.aria-expanded]="gyroing()" title="Set the dev command, archive orphaned sessions, and move the project onto Gyro's port leases">Convert to Gyro project</button>
@@ -58,6 +64,16 @@ import { OpenRequest } from './worktree-panel';
     <div class="body">
       @if (newing() && !p.closed) {
         <app-new-session [ws]="p" (started)="newing.set(false); started.emit($event)" (cancel)="newing.set(false)" />
+      }
+      @if (noxStarting() && !p.closed && p.nox?.repo) {
+        <app-nox-start [ws]="p" (started)="onNoxStarted($event)" (cancel)="noxStarting.set(false)" />
+      }
+      @if (noxStarted(); as r) {
+        <p class="started" role="status">
+          #{{ r.number }} moved to {{ r.status }}@if (r.commentUrl) { with <a [href]="r.commentUrl" target="_blank" rel="noopener">your comment</a> }.
+          Lumos picks it up shortly; it shows under Nox Lumos once it does.
+          <button type="button" class="link" (click)="noxStarted.set(null)">dismiss</button>
+        </p>
       }
       @if (!p.closed && (gyroing() || p.gyro)) {
         <app-gyro-section [ws]="p" [now]="now()" [(confirming)]="gyroing" (pick)="pick.emit($event)" />
@@ -114,6 +130,19 @@ export class ProjectPanel {
   readonly started = output<NewSession>();
   /** The new-session form is open. */
   readonly newing = signal(false);
+  /** The start-a-Lumos-ticket form is open. */
+  readonly noxStarting = signal(false);
+  /** What the last start did, until dismissed. */
+  protected readonly noxStarted = signal<NoxStarted | null>(null);
+  private readonly api = inject(DashboardService);
+
+  protected onNoxStarted(r: NoxStarted): void {
+    this.noxStarting.set(false);
+    this.noxStarted.set(r);
+    this.api.boardChanged();
+    this.api.refresh();
+  }
+
   /** The Gyro conversion's confirmation is open. */
   readonly gyroing = signal(false);
 

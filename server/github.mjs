@@ -392,7 +392,7 @@ const ENTRY_QUERY = `query($id:ID!){ node(id:$id){ ... on ProjectV2Item { id ful
     field(name:"Status"){ ... on ProjectV2SingleSelectField { id options{ id name color } } } }
   status: fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { optionId } }
   content { __typename
-    ... on Issue { number title url state stateReason body bodyHTML createdAt author{login} repository{nameWithOwner}
+    ... on Issue { id number title url state stateReason body bodyHTML createdAt author{login} repository{nameWithOwner}
       assignees(first:10){nodes{login}} labels(first:10){nodes{name}}
       comments(last:30){ totalCount nodes{ id author{login} createdAt body bodyHTML url } } }
     ... on PullRequest { number title url state isDraft headRefName baseRefName body bodyHTML createdAt author{login} repository{nameWithOwner}
@@ -433,6 +433,8 @@ export async function projectEntry(project, id) {
     number: c.number ?? null,
     title: c.title ?? '(untitled)',
     contentUrl: c.url ?? null,
+    /** The issue's node id (for commenting); null for PRs and drafts. */
+    contentId: c.__typename === 'Issue' ? c.id : null,
     /** The issue or PR's own state (OPEN, CLOSED, MERGED), for reference; the board's Status is what matters here. */
     state: c.state ?? null,
     draft: !!c.isDraft,
@@ -500,6 +502,23 @@ export async function moveEntry(project, id, optionId) {
     updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$o}}){ projectV2Item{ id } } }`;
   await ghJson(['api', 'graphql', '-f', `query=${mutation}`, '-f', `p=${e.projectId}`, '-f', `i=${e.id}`, '-f', `f=${e.fieldId}`, '-f', `o=${optionId}`]);
   return { ...e, statusId: optionId, updatedAt: Date.now() };
+}
+
+/**
+ * The open GitHub Projects the repo's issues are tracked on, each with its Status column names:
+ * [{ owner, number, title, url, statuses }]. For finding the board Nox Lumos works when Gyro has none linked.
+ */
+export async function repoProjects(repo) {
+  if (!REPO.test(repo ?? '')) throw new Error('Bad repo');
+  const [owner, name] = repo.split('/');
+  const query = `query($o:String!,$n:String!){ repository(owner:$o,name:$n){ projectsV2(first:20){ nodes{
+    number title url closed owner{ ... on Organization{login} ... on User{login} }
+    field(name:"Status"){ ... on ProjectV2SingleSelectField { options{ name } } } } } } }`;
+  const r = (await ghJson(['api', 'graphql', '-f', `query=${query}`, '-f', `o=${owner}`, '-f', `n=${name}`])).data?.repository;
+  if (!r) throw new Error(`${repo} wasn't found on GitHub`);
+  return (r.projectsV2?.nodes ?? [])
+    .filter((p) => p && !p.closed && p.owner?.login)
+    .map((p) => ({ owner: p.owner.login, number: p.number, title: p.title, url: p.url, statuses: (p.field?.options ?? []).map((o) => o.name) }));
 }
 
 // ---------- an issue Nox Lumos works: its board Status, and comments ----------
