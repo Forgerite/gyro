@@ -192,6 +192,7 @@ export class GithubSection {
       next: ({ github }) => {
         this.busy.set(false);
         this.api.snapshot.update((s) => s && { ...s, workspaces: s.workspaces.map((w) => (w.path === path ? { ...w, github } : w)) });
+        this.api.refresh(); // a Nox Lumos server running the repo is linked on the next snapshot
         done();
       },
       error: (e) => {

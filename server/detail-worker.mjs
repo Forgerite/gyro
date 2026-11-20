@@ -7,13 +7,14 @@ import { composeCommit } from './compose.mjs';
 import { autoRebase } from './rebase.mjs';
 import { createPr } from './pr.mjs';
 import { createWorktree, worktreeBases } from './worktrees.mjs';
+import { remoteRepos } from './github.mjs';
 
 const detail = gitDetail(async (wt) => wt);
 /** Create PR pushes with the Git tab's own push first. */
 const pushBranch = (path) => detail.gitAction({ path: { path, git: {} }, action: 'push' });
 
 const ops = {
-  ...detail, checkProject, createProject, projectCandidates, composeCommit, autoRebase, createWorktree, worktreeBases,
+  ...detail, checkProject, createProject, projectCandidates, composeCommit, autoRebase, createWorktree, worktreeBases, remoteRepos,
   createPr: (arg) => createPr(arg, pushBranch),
 };
 

@@ -6,6 +6,7 @@ import { DevSection } from './dev-section';
 import { GithubSection } from './github-section';
 import { GyroSection } from './gyro-section';
 import { NewSession, NewSessionForm } from './new-session';
+import { NoxSection } from './nox-section';
 import { PullsSection } from './pulls-section';
 import { WtFlags } from './wt-flags';
 import { Session, Workspace, sessionState } from './model';
@@ -13,7 +14,7 @@ import { OpenRequest } from './worktree-panel';
 
 @Component({
   selector: 'app-project-panel',
-  imports: [AgoPipe, BaseSection, BoardSection, DevSection, GithubSection, GyroSection, NewSessionForm, PullsSection, WtFlags],
+  imports: [AgoPipe, BaseSection, BoardSection, DevSection, GithubSection, GyroSection, NewSessionForm, NoxSection, PullsSection, WtFlags],
   template: `
     @let p = ws();
     <header>
@@ -62,6 +63,7 @@ import { OpenRequest } from './worktree-panel';
         <app-gyro-section [ws]="p" [now]="now()" [(confirming)]="gyroing" (pick)="pick.emit($event)" />
       }
       <app-github-section [ws]="p" />
+      <app-nox-section [ws]="p" [now]="now()" />
       <app-base-section [ws]="p" />
       <app-dev-section [ws]="p" />
 

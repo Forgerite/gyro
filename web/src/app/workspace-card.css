@@ -153,3 +153,29 @@ app-wt-flags { justify-content: flex-end; }
 :host(.closed) header { border-bottom: none; background: var(--panel); }
 :host(.closed) h2 { font-weight: 500; color: var(--text-2); }
 .closed-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+/* Nox Lumos: the tickets its server is working for this repo, below the sessions. Rows link to the issue. */
+.nox { border-top: 1px solid var(--border); padding: 2px 0 3px; }
+.nox h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 3px 8px 1px;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.nox-count { font-weight: 400; }
+.nox-server { font-weight: 400; text-transform: none; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.nox-err { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--danger); }
+.nox-note { margin: 1px 8px 2px 24px; font-size: 11px; color: var(--muted); }
+a.nox-row { color: var(--text); text-decoration: none; }
+.nox-row .name { font-variant-numeric: tabular-nums; }
+/* Ticket rows: number, Status chip, title + why; no git-flags column. */
+.nox-row { grid-template-columns: 10px auto auto minmax(0, 1fr) 0 26px; }
+.nox-row .stagechip { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.nox-row .why { color: var(--muted); }
+/* A paused ticket isn't a closed session: a filled dot, not a ring. */
+.nox-row.waiting .dot { background: var(--waiting); border: none; }

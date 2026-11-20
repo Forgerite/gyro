@@ -20,6 +20,9 @@
     <button type="button" class="new-proj" (click)="startCreating()" [attr.aria-pressed]="creating()" title="Start a new git repository in the code folder">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>New project
     </button>
+    <button type="button" class="new-proj" (click)="manageNox()" [attr.aria-pressed]="nox.managing()" title="Add and check the Nox Lumos servers projects can link to">
+      Nox Lumos
+    </button>
     <span class="spacer"></span>
     @if (api.error(); as err) { <span class="error" role="alert">{{ err }}</span> }
     <span class="hint"><kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> open/resume · <kbd>u</kbd> up · <kbd>c</kbd> code · <kbd>g</kbd> git · <kbd>p</kbd> PR</span>
@@ -102,6 +105,8 @@
       <app-entry-view [target]="en" />
     } @else if (creating()) {
       <app-new-project-panel (created)="projectCreated($event)" (cancel)="creating.set(false)" />
+    } @else if (nox.managing()) {
+      <app-nox-servers-panel [now]="now()" (closed)="nox.managing.set(false)" />
     } @else if (picked().length > 1) {
       <app-bulk-archive-panel [sessions]="picked()" [now]="now()" (remove)="unpick($event)" (clear)="multi.set([])"
                               (done)="multi.set([]); selected.set(null)" />

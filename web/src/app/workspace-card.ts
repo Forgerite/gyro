@@ -105,6 +105,36 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessio
         }
       </div>
     }
+    @if (ws().nox; as n) {
+      <div class="nox" role="group" [attr.aria-label]="'Nox Lumos tickets in ' + ws().name">
+        <h3>
+          <span [title]="'Tickets ' + n.server.name + ' is working on ' + (n.repo ?? 'this repo') + ': green while it works them, red once it stops on a human, CI or a failure'">Nox Lumos</span>
+          @if (n.tickets?.length) { <span class="nox-count">{{ n.tickets!.length }}</span> }
+          <span class="nox-server">· {{ n.server.name }}</span>
+          @if (n.error) { <span class="nox-err" [title]="n.error">⚠ {{ n.tickets ? 'stale' : 'unreachable' }}</span> }
+        </h3>
+        @if (n.tickets === null) {
+          @if (!n.error) { <p class="nox-note">Loading…</p> }
+        } @else if (!n.tickets.length) {
+          <p class="nox-note">No active tickets</p>
+        } @else {
+          <ul>
+            @for (t of n.tickets; track t.id) {
+              <li>
+                <a [class]="'row nox-row ' + t.state" [href]="t.url" target="_blank" rel="noopener" [title]="t.title + ' — ' + t.label">
+                  <span class="dot" role="img" [attr.aria-label]="t.state === 'busy' ? 'Lumos is on it' : 'Lumos is paused'"></span>
+                  <span class="name">#{{ t.number }}</span>
+                  <span class="stagechip">{{ t.status }}</span>
+                  <span class="title">{{ t.title }} <span class="why">· {{ t.label }}</span></span>
+                  <span></span>
+                  <span class="age">{{ t.updatedAt | ago: now() }}</span>
+                </a>
+              </li>
+            }
+          </ul>
+        }
+      </div>
+    }
     }
   `,
   styleUrl: './workspace-card.css',
@@ -155,7 +185,8 @@ export class WorkspaceCard {
   protected readonly counts = computed(() => {
     const c = { busy: 0, waiting: 0 };
     const states = [...this.ws().worktrees.map((wt) => this.stateOf(wt)), ...this.ws().loose.map((s) => this.looseStateOf(s))];
-    for (const st of states) {
+    // Nox Lumos tickets count too: one it stopped on is as much "on you" as a session waiting for you.
+    for (const st of [...states, ...(this.ws().nox?.tickets ?? []).map((t) => t.state)]) {
       if (st === 'busy') c.busy++;
       else if (st === 'waiting') c.waiting++;
     }
