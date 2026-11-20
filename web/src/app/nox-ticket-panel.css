@@ -84,3 +84,7 @@ h4 .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .compose-acts .hint { margin-left: auto; }
 .compose-acts .hint a { color: var(--accent); }
 kbd { font: inherit; font-size: 10px; padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; }
+
+/* Comments, prompts and replies are markdown: rendered, so the message box's pre-wrap would double the line breaks. */
+.msg .md { white-space: normal; color: var(--text-2); font-size: 12px; }
+.msg .md pre { white-space: pre; }

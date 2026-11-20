@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { AgoPipe } from './ago.pipe';
+import { MdPipe } from './md.pipe';
 import { NoxConclusion, NoxRun, NoxTicket, NoxTicketDetail, NoxTicketStatus, Workspace } from './model';
 
 /**
@@ -10,7 +11,8 @@ import { NoxConclusion, NoxRun, NoxTicket, NoxTicketDetail, NoxTicketStatus, Wor
  */
 @Component({
   selector: 'app-nox-ticket-panel',
-  imports: [AgoPipe],
+  imports: [AgoPipe, MdPipe],
+  host: { '(click)': 'externalLinks($event)' },
   template: `
     @let t = ticket();
     @let d = detail();
@@ -88,7 +90,7 @@ import { NoxConclusion, NoxRun, NoxTicket, NoxTicketDetail, NoxTicketStatus, Wor
             <div class="msg concl" [class]="'msg concl ' + c.kind">
               <span class="who">lumos {{ conclusionVerb(c) }} · {{ c.at | ago: now() }}</span>
               <strong>{{ c.headline }}</strong>
-              @if (c.comment) { <div class="comment">{{ comment(c.comment) }}</div> }
+              @if (c.comment) { <div class="comment md" [innerHTML]="c.comment | md"></div> }
               @if (c.error && !c.headline.includes(c.error)) { <div class="err">{{ c.error }}</div> }
             </div>
           }
@@ -107,25 +109,25 @@ import { NoxConclusion, NoxRun, NoxTicket, NoxTicketDetail, NoxTicketStatus, Wor
                   <p class="note">{{ r.attempts }} {{ r.attempts === 1 ? 'try' : 'tries' }}@if (r.lastError) { · <span class="err">{{ r.lastError }}</span> }</p>
                 }
                 @if (r.prompt; as p) {
-                  <div class="msg user asked"><span class="who">{{ p.requestedBy }} asked lumos · {{ r.createdAt | ago: now() }}</span>{{ p.text }}</div>
+                  <div class="msg user asked"><span class="who">{{ p.requestedBy }} asked lumos · {{ r.createdAt | ago: now() }}</span><div class="md" [innerHTML]="p.text | md"></div></div>
                 }
                 @for (x of r.claude; track x.taskId + x.at) {
                   <details class="prompt">
                     <summary><span class="who inline">lumos → claude</span> {{ x.at | ago: now() }} · {{ firstLine(x.prompt) }}</summary>
-                    <div class="msg user">{{ x.prompt }}</div>
+                    <div class="msg user"><div class="md" [innerHTML]="x.prompt | md"></div></div>
                   </details>
                   @if (x.response; as resp) {
                     <div class="msg reply" [class.failed]="!resp.ok">
                       <span class="who">claude · {{ resp.ok ? 'finished' : 'failed' + (resp.exitCode !== null ? ' (exit ' + resp.exitCode + ')' : '') }} · took {{ took(x.at, resp.at) }}</span>
                       @if (resp.error) { <div class="err">{{ resp.error }}</div> }
-                      {{ resp.output || '(no output)' }}
+                      @if (resp.output) { <div class="md" [innerHTML]="resp.output | md"></div> } @else { (no output) }
                     </div>
                   } @else {
                     <div class="msg reply pending"><span class="who">claude</span>@if (r.queueState === 'processing') { Working… } @else { No answer (the run was cut short) }</div>
                   }
                 }
                 @if (r.conclusion?.comment && !first) {
-                  <div class="msg concl"><span class="who">lumos commented</span>{{ comment(r.conclusion!.comment!) }}</div>
+                  <div class="msg concl"><span class="who">lumos commented</span><div class="md" [innerHTML]="r.conclusion!.comment! | md"></div></div>
                 }
                 @if (r.trail.length) {
                   <ol class="trail" aria-label="Trail">
@@ -380,9 +382,12 @@ export class NoxTicketPanel {
     return '';
   }
 
-  /** A posted comment without the hidden marker Lumos tags its comments with. */
-  protected comment(s: string) {
-    return s.replace(/<!--[\s\S]*?-->\s*/g, '').trim();
+  /** Links inside rendered markdown open in a new tab, like every other link here. */
+  protected externalLinks(ev: MouseEvent): void {
+    const a = (ev.target as HTMLElement).closest('a');
+    if (!a || !a.closest('.md') || !a.href || a.target === '_blank') return;
+    ev.preventDefault();
+    window.open(a.href, '_blank', 'noopener');
   }
 
   protected firstLine(s: string) {

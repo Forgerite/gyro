@@ -9,7 +9,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import { allBases, allNoxLinks, allNoxServers, getBase, getDev, getGithub, getNoxLink, getNoxServer, isClosed, setBase, setClosed, setDev, setGithub, setNoxLink, setNoxServer } from './state.mjs';
 import { STATUS_TTL, checkServer, forgetServer, keyPrefix, canPrompt, noxPrompt, noxTicketDetail, noxTickets, normalizeUrl, onReposChanged, pollServers, rememberStatus, serverStatus } from './nox.mjs';
-import { commentIssue, createRepo, entryBrief, issueStatus, moveIssue, githubOptions, githubOwners, mergePr, moveEntry, openPulls, prDetail, prForBranch, projectBoard, projectEntry, repoInfo, resolveLink, whyNotMergeable } from './github.mjs';
+import { commentIssue, createRepo, entryBrief, issueStatus, moveIssue, githubOptions, githubOwners, mergePr, moveEntry, openPulls, prDetail, prForBranch, projectBoard, projectEntry, repoInfo, repoProjects, resolveLink, whyNotMergeable } from './github.mjs';
 import { findReports, serveReport } from './reports.mjs';
 import { attachLiveSocket } from './live.mjs';
 import { listRecordings, readFrame, recordingIndex } from './recordings.mjs';
@@ -303,6 +303,37 @@ async function saveNoxServer({ id, name, url, key }) {
   forgetServer(server.id);
   rememberStatus(server.id, info); // the next snapshot can auto-link projects to it straight away
   return server;
+}
+
+/** The Status column a new Lumos ticket goes to: Lumos starts analysing what lands there. */
+const READY_FOR_ANALYSIS = /^\s*ready\s+for\s+analysis\s*$/i;
+
+const BACKLOG = /^\s*backlog\s*$/i;
+const LUMOS_BOARD_TTL = 10 * 60_000;
+/** lowercased repo -> { at, project } */
+const lumosBoards = new Map();
+
+/**
+ * The GitHub Project a Lumos-linked project's tickets move on: the board linked in Gyro when it has a
+ * Ready for Analysis column, else the repo's own board that has one (found once, then cached).
+ */
+async function lumosBoard(ws) {
+  const linked = getGithub(ws.path)?.project ?? null;
+  const key = ws.nox.repo.toLowerCase();
+  const c = lumosBoards.get(key);
+  if (c && Date.now() - c.at < LUMOS_BOARD_TTL) return c.project;
+  const boards = await repoProjects(ws.nox.repo).catch((e) => { throw httpError(502, e.message); });
+  const ready = boards.filter((b) => b.statuses.some((s) => READY_FOR_ANALYSIS.test(s)));
+  const same = (b) => linked && b.number === linked.number && b.owner.toLowerCase() === linked.owner.toLowerCase();
+  const pick = ready.find(same) ?? ready[0];
+  if (!pick) {
+    throw httpError(400, boards.length
+      ? `None of ${ws.nox.repo}'s GitHub Projects (${boards.map((b) => b.title).join(', ')}) has a Ready for Analysis column`
+      : `${ws.nox.repo} isn't on a GitHub Project`);
+  }
+  const project = { owner: pick.owner, number: pick.number, title: pick.title, url: pick.url };
+  lumosBoards.set(key, { at: Date.now(), project });
+  return project;
 }
 
 /** The linked GitHub Project's board, cached briefly (big boards take seconds). */
@@ -961,6 +992,25 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && (req.url === '/api/nox/servers' || req.url === '/api/nox/servers?check=1')) {
       return send(res, 200, { servers: await noxServers({ check: req.url.endsWith('check=1') }) });
     }
+    if (req.method === 'GET' && req.url.startsWith('/api/nox/backlog?')) {
+      // The issues waiting in the Backlog of the board Lumos works, for handing one to it.
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const ws = await knownProject(q.get('path'));
+      if (!ws.nox?.repo) throw httpError(400, `${ws.name} isn't linked to a Nox Lumos server`);
+      const project = await lumosBoard(ws);
+      const board = await boardFor({ project }, q.get('fresh') === '1').catch((e) => { throw httpError(502, e.message); });
+      const col = board.columns.find((c) => BACKLOG.test(c.name)) ?? null;
+      const repo = ws.nox.repo.toLowerCase();
+      const items = (col?.items ?? []).filter((it) => it.kind === 'issue' && it.repo?.toLowerCase() === repo);
+      return send(res, 200, { project, column: col?.name ?? null, items, truncated: board.truncated, fetchedAt: board.fetchedAt });
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/nox/entry?')) {
+      const q = new URL(req.url, 'http://localhost').searchParams;
+      const ws = await knownProject(q.get('path'));
+      if (!ws.nox?.repo) throw httpError(400, `${ws.name} isn't linked to a Nox Lumos server`);
+      const e = await projectEntry(await lumosBoard(ws), q.get('id')).catch((err) => { throw httpError(err.status ?? 502, err.message); });
+      return send(res, 200, e);
+    }
     if (req.method === 'GET' && req.url.startsWith('/api/nox/ticket/status?')) {
       // The ticket's card on its GitHub Project, with the board's Status columns to move it between.
       const q = new URL(req.url, 'http://localhost').searchParams;
@@ -1190,6 +1240,24 @@ const server = createServer(async (req, res) => {
         await scan('projectBases', allBases()); // rescans, so the reply already counts against the new base
         const fresh = await knownProject(ws.path);
         return send(res, 200, { base: fresh.base, trunk: fresh.trunk ?? null });
+      }
+      if (req.url === '/api/nox/start') {
+        // Hand a backlog issue to Lumos: comment first (so its run reads it), then move the card to the stage Lumos starts on.
+        const { path, id, comment } = await readJson(req);
+        const ws = await knownProject(path);
+        if (!ws.nox?.repo) throw httpError(400, `${ws.name} isn't linked to a Nox Lumos server`);
+        const project = await lumosBoard(ws);
+        const text = typeof comment === 'string' ? comment.trim() : '';
+        if (text.length > 65_000) throw httpError(400, 'That comment is longer than GitHub allows');
+        const e = await projectEntry(project, id).catch((err) => { throw httpError(502, err.message); });
+        if (e.kind !== 'issue' || !e.contentId) throw httpError(400, `Lumos works issues; that entry is a ${e.kind === 'pr' ? 'pull request' : 'draft'}`);
+        if (e.repo?.toLowerCase() !== ws.nox.repo.toLowerCase()) throw httpError(400, `That issue isn't one of ${ws.nox.repo}'s`);
+        const to = e.options.find((o) => READY_FOR_ANALYSIS.test(o.name));
+        if (!to) throw httpError(400, `The board has no "Ready for Analysis" column (it has ${e.options.map((o) => o.name).join(', ')})`);
+        const commentUrl = text ? await commentIssue(e.contentId, ws.nox.repo, text).catch((err) => { throw httpError(502, err.message); }) : null;
+        await moveEntry(project, e.id, to.id).catch((err) => { throw httpError(502, err.message); });
+        boardCache.delete(`${project.owner}/${project.number}`.toLowerCase());
+        return send(res, 200, { issueId: e.contentId, number: e.number, status: to.name, commentUrl });
       }
       if (req.url === '/api/nox/ticket/move') {
         // Moving the card is what Lumos listens for: a stage with a workflow starts a run on its own.

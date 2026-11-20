@@ -91,3 +91,7 @@ ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .closed-note { margin: 6px 0 0; font-size: 11px; color: var(--muted); }
 .actions .primary { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .actions .primary:hover { filter: brightness(1.1); }
+
+/* After handing a ticket to Lumos. */
+.started { margin: 0; padding: 6px 10px; font-size: 12px; border: 1px solid var(--border); border-left: 2px solid var(--busy); border-radius: 5px; background: var(--panel); }
+.started a { color: var(--accent); }
