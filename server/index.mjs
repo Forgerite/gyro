@@ -7,7 +7,8 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
-import { allBases, getBase, getDev, getGithub, isClosed, setBase, setClosed, setDev, setGithub } from './state.mjs';
+import { allBases, allNoxLinks, allNoxServers, getBase, getDev, getGithub, getNoxLink, getNoxServer, isClosed, setBase, setClosed, setDev, setGithub, setNoxLink, setNoxServer } from './state.mjs';
+import { STATUS_TTL, checkServer, forgetServer, keyPrefix, noxTickets, normalizeUrl, onReposChanged, pollServers, rememberStatus, serverStatus } from './nox.mjs';
 import { createRepo, entryBrief, githubOptions, githubOwners, mergePr, moveEntry, openPulls, prDetail, prForBranch, projectBoard, projectEntry, repoInfo, resolveLink, whyNotMergeable } from './github.mjs';
 import { findReports, serveReport } from './reports.mjs';
 import { attachLiveSocket } from './live.mjs';
@@ -79,7 +80,8 @@ async function snapshot() {
   const work = allWork();
   const workspaces = snap.workspaces.map((ws) => {
     const g = withGithub({ ...ws, gyro: gyro.get(norm(ws.path)) ?? null, worktrees: ws.worktrees.map((wt) => ({ ...wt, ports: portsOf(wt.path) })), closed: isClosed(ws.path), dev: { command: getDev(ws.path) ?? null, detected: detectDev(ws.path) }, base: baseSetting(ws) });
-    return { ...g, worktrees: g.worktrees.map((wt) => ({ ...wt, work: workView(wt, g, work) })) };
+    autoLinkNox(g);
+    return { ...g, nox: withNox(g), worktrees: g.worktrees.map((wt) => ({ ...wt, work: workView(wt, g, work) })) };
   });
   pushSessionBases();
   return { ...snap, workspaces, terms: listTerms() };
@@ -194,6 +196,113 @@ function withGithub(ws) {
   const pulls = c.list && { list: c.list, at: c.at, error: c.error };
   const worktrees = ws.worktrees.map((wt) => ({ ...wt, pr: (wt.branch && c.list?.find((p) => p.branch === wt.branch)) || null }));
   return { ...ws, github, pulls, worktrees };
+}
+
+/**
+ * The project's Nox Lumos side: its server and the tickets Lumos is working for the project's repo
+ * (the one set on the link, else the linked GitHub repo). A closed project isn't polled.
+ */
+function withNox(ws) {
+  const link = getNoxLink(ws.path);
+  const server = link?.server && getNoxServer(link.server);
+  if (!server) return null;
+  const repo = link.repo ?? ws.github?.repo ?? null;
+  const view = { server: { id: server.id, name: server.name, url: server.url }, repo, auto: !!link.auto, at: null, tickets: null, error: null };
+  if (!repo) return { ...view, error: 'Link the project to its GitHub repo, or name the repo here, so Gyro knows which tickets are its' };
+  if (ws.closed) return view;
+  const repos = serverStatus(server).info?.repos;
+  if (repos && !repos.includes(repo.toLowerCase())) return { ...view, tickets: [], error: `${server.name} no longer runs ${repo}` };
+  return { ...view, ...noxTickets(server, repo) };
+}
+
+const REMOTES_TTL = 10 * 60_000;
+/** normalized repo path -> { at, repos, pending }: the project's GitHub remotes (owner/name), from the detail worker. */
+const remotesCache = new Map();
+
+/** The GitHub repos among the project's remotes, cached; refetched in the background once stale. */
+function remotesOf(ws) {
+  const key = norm(ws.path);
+  const c = remotesCache.get(key) ?? { at: 0, repos: null, pending: null };
+  remotesCache.set(key, c);
+  if (Date.now() - c.at > REMOTES_TTL && !c.pending) {
+    c.pending = detail('remoteRepos', ws.path)
+      .then((list) => (c.repos = list.map((r) => r.repo)))
+      .catch(() => {}) // keep what we had; an unreadable repo just isn't matched
+      .finally(() => Object.assign(c, { at: Date.now(), pending: null }));
+  }
+  return c.repos ?? [];
+}
+
+/**
+ * Link a project that has no Nox Lumos link yet to the first server (by name) that runs its repo: the
+ * linked GitHub repo, else one of its GitHub remotes. Runs on every snapshot, so a server being added,
+ * a project appearing, or a project getting its GitHub link all land here. Uses cached server checks
+ * only; a project unlinked by hand ({ off: true }) is left alone.
+ */
+function autoLinkNox(ws) {
+  if (getNoxLink(ws.path)) return;
+  // Read the remotes even with no servers yet, so they're known by the time one is added.
+  const remotes = remotesOf(ws);
+  const servers = Object.values(allNoxServers()).sort((a, b) => a.name.localeCompare(b.name));
+  if (!servers.length) return;
+  const linked = ws.github?.repo ?? null;
+  const candidates = [...new Set([linked, ...remotes].filter(Boolean))];
+  for (const server of servers) {
+    const repos = serverStatus(server).info?.repos ?? [];
+    const repo = candidates.find((r) => repos.includes(r.toLowerCase()));
+    if (!repo) continue;
+    // The linked GitHub repo needn't be repeated; a remote's repo is pinned, since nothing else names it.
+    setNoxLink(ws.path, { server: server.id, name: ws.name, auto: true, ...(repo !== linked && { repo }) });
+    return;
+  }
+}
+
+/**
+ * Poll every Nox Lumos server for the repos it runs, whether or not a dashboard is open: a repo added
+ * to a server after the project was set up still gets linked. When a server's repos change, take a
+ * snapshot right away, which links any project that now matches.
+ */
+setInterval(() => pollServers(Object.values(allNoxServers())), STATUS_TTL).unref();
+onReposChanged(() => snapshot().catch((e) => console.warn(`Nox Lumos auto-link after a repo change failed: ${e.message}`)));
+
+/** A server as the dashboard sees it: no key, just its prefix, plus its checked status and who uses it. */
+function serverView(server) {
+  const c = serverStatus(server);
+  const users = Object.entries(allNoxLinks()).filter(([, l]) => l.server === server.id).map(([path, l]) => l.name ?? basename(path));
+  return {
+    id: server.id, name: server.name, url: server.url, keyPrefix: keyPrefix(server.key), addedAt: server.addedAt,
+    projects: users, status: { at: c.at || null, checking: !!c.pending, error: c.error, ...(c.info ?? {}) },
+  };
+}
+
+async function noxServers({ check = false } = {}) {
+  const servers = Object.values(allNoxServers());
+  const pending = servers.map((s) => serverStatus(s, check)).filter((c) => c.pending && (check || !c.at)).map((c) => c.pending);
+  await Promise.all(pending); // first look (or a forced check) waits; later ones get the cached status
+  return servers.sort((a, b) => a.name.localeCompare(b.name)).map(serverView);
+}
+
+/** Add a server ({ name, url, key }) or change one ({ id, … }; no key keeps the saved one). Checked before it's saved. */
+async function saveNoxServer({ id, name, url, key }) {
+  const old = id ? getNoxServer(id) : null;
+  if (id && !old) throw httpError(400, 'unknown Nox Lumos server');
+  const clean = typeof name === 'string' ? name.trim() : '';
+  if (!clean || clean.length > 60) throw httpError(400, 'Give the server a name (up to 60 characters)');
+  let u;
+  try {
+    u = normalizeUrl(url);
+  } catch (e) {
+    throw httpError(400, e.message);
+  }
+  const k = typeof key === 'string' && key.trim() ? key.trim() : old?.key;
+  if (!k) throw httpError(400, 'Paste an API key made in the Nox Lumos portal (API keys page)');
+  if (!/^nlk_[A-Za-z0-9_-]{20,}$/.test(k)) throw httpError(400, "That isn't a Nox Lumos API key (they start with nlk_)");
+  const server = { id: old?.id ?? crypto.randomUUID().slice(0, 8), name: clean, url: u, key: k, addedAt: old?.addedAt ?? Date.now() };
+  const info = await checkServer(server).catch((e) => { throw httpError(400, e.message); });
+  setNoxServer(server.id, server);
+  forgetServer(server.id);
+  rememberStatus(server.id, info); // the next snapshot can auto-link projects to it straight away
+  return server;
 }
 
 /** The linked GitHub Project's board, cached briefly (big boards take seconds). */
@@ -837,6 +946,9 @@ const server = createServer(async (req, res) => {
       const ws = await knownProject(new URL(req.url, 'http://localhost').searchParams.get('path'));
       return send(res, 200, await detail('worktreeBases', { repo: ws.path, trunk: ws.trunk ?? null }).catch((e) => { throw httpError(400, e.message); }));
     }
+    if (req.method === 'GET' && (req.url === '/api/nox/servers' || req.url === '/api/nox/servers?check=1')) {
+      return send(res, 200, { servers: await noxServers({ check: req.url.endsWith('check=1') }) });
+    }
     if (req.method === 'GET' && req.url === '/api/github/owners') {
       // Not cached: it's asked once per New project panel, and a fresh gh sign-in should show up.
       return send(res, 200, await githubOwners().then((owners) => ({ owners, error: null }), (e) => ({ owners: [], error: e.message })));
@@ -1051,6 +1163,37 @@ const server = createServer(async (req, res) => {
         await scan('projectBases', allBases()); // rescans, so the reply already counts against the new base
         const fresh = await knownProject(ws.path);
         return send(res, 200, { base: fresh.base, trunk: fresh.trunk ?? null });
+      }
+      if (req.url === '/api/projects/nox') {
+        const { path, server: id, repo } = await readJson(req);
+        const ws = await knownProject(path);
+        // Remembered as off, so auto-linking doesn't put it straight back.
+        if (id === null) return (setNoxLink(ws.path, { off: true, name: ws.name }), send(res, 200, { nox: null }));
+        const server = getNoxServer(id);
+        if (!server) throw httpError(400, 'unknown Nox Lumos server');
+        const own = typeof repo === 'string' && repo.trim() ? repo.trim() : null;
+        if (own && !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/.test(own)) throw httpError(400, 'Name the repo as owner/name');
+        const target = own ?? ws.github?.repo;
+        if (!target) throw httpError(400, 'Link the project to its GitHub repo first, or name the repo here');
+        const status = serverStatus(server, true);
+        await status.pending;
+        if (status.error) throw httpError(400, `${server.name}: ${status.error}`);
+        if (!status.info.repos.includes(target.toLowerCase())) {
+          throw httpError(400, `${server.name} doesn't run ${target}${status.info.repos.length ? ` (it runs ${status.info.repos.join(', ')})` : ''}`);
+        }
+        setNoxLink(ws.path, { server: server.id, name: ws.name, ...(own && { repo: own }) });
+        return send(res, 200, { nox: withNox({ ...ws, closed: false }) });
+      }
+      if (req.url === '/api/nox/servers') {
+        const server = await saveNoxServer(await readJson(req));
+        return send(res, 200, { servers: await noxServers(), id: server.id });
+      }
+      if (req.url === '/api/nox/servers/remove') {
+        const { id } = await readJson(req);
+        if (!getNoxServer(id)) throw httpError(400, 'unknown Nox Lumos server');
+        setNoxServer(id, null);
+        forgetServer(id);
+        return send(res, 200, { servers: await noxServers() });
       }
       if (req.url === '/api/github/link') {
         const { path, repo, project } = await readJson(req);

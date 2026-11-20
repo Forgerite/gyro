@@ -140,6 +140,8 @@ export interface Workspace {
   closed?: boolean;
   /** The GitHub repo (and optionally GitHub Project) this project is linked to. */
   github?: GithubLink | null;
+  /** The Nox Lumos server working this project's tickets, and those tickets; null when not linked. */
+  nox?: NoxLink | null;
   /** Open PRs of the linked repo, as of `at`; absent until first fetched. */
   pulls?: { list: PullRequest[]; at: number; error: string | null } | null;
   /** The dev server dock sessions start beside. */
@@ -298,6 +300,60 @@ export interface Board {
   truncated: boolean;
   columns: { id: string | null; name: string; color: string | null; done: boolean; items: BoardItem[] }[];
   fetchedAt: number;
+}
+
+/** A ticket on the GitHub Project in a stage Nox Lumos runs a workflow in. */
+export interface NoxTicket {
+  /** The issue's GraphQL node id. */
+  id: string;
+  number: number;
+  title: string;
+  url: string;
+  /** The Project Status it's in, as Nox Lumos last saw it. */
+  status: string;
+  /** Nox Lumos's stage key (ANALYSIS, DEVELOPMENT, …). */
+  stage: string | null;
+  queueState: 'pending' | 'processing' | 'done' | 'dead';
+  updatedAt: number;
+  /** busy (green): Lumos has it queued or running. waiting (red): Lumos stopped on a human, CI or a failure. */
+  state: 'busy' | 'waiting';
+  /** What it's doing or waiting on, in a line. */
+  label: string;
+}
+
+export interface NoxLink {
+  server: { id: string; name: string; url: string };
+  /** owner/name whose tickets are shown. */
+  repo: string | null;
+  /** Linked by Gyro because the server runs the project's repo, not picked by hand. */
+  auto: boolean;
+  /** When the tickets were last fetched. */
+  at: number | null;
+  /** null until first fetched (and while the project is closed). */
+  tickets: NoxTicket[] | null;
+  error: string | null;
+}
+
+/** A Nox Lumos server added to Gyro. Its API key stays in the Gyro API; only the prefix comes out. */
+export interface NoxServer {
+  id: string;
+  name: string;
+  url: string;
+  keyPrefix: string;
+  addedAt: number;
+  /** Names of the projects linked to it. */
+  projects: string[];
+  /** The last check of the key against the server: who it is, its scopes, the repos the server runs. */
+  status: {
+    at: number | null;
+    checking: boolean;
+    error: string | null;
+    user?: string | null;
+    keyName?: string | null;
+    auth?: 'key' | 'jwt' | null;
+    scopes?: string[];
+    repos?: string[];
+  };
 }
 
 export interface GithubProject {

@@ -9,6 +9,8 @@ import { EntryView } from './entry-view';
 import { DiffViewer } from './diff-viewer';
 import { LooseSessionPanel } from './loose-session-panel';
 import { Created, NewProjectPanel } from './new-project-panel';
+import { NoxService } from './nox.service';
+import { NoxServersPanel } from './nox-servers-panel';
 import { ProjectPanel } from './project-panel';
 import { OpenRequest, WorktreePanel } from './worktree-panel';
 import { SessionPick, WorkspaceCard } from './workspace-card';
@@ -36,7 +38,8 @@ const QUICK_LAYOUTS: readonly { id: QuickLayout; label: string; key: string; x: 
 
 @Component({
   selector: 'app-root',
-  imports: [WorkspaceCard, ProjectPanel, WorktreePanel, LooseSessionPanel, BulkArchivePanel, NewProjectPanel, TerminalDock, DiffViewer, EntryView, AgoPipe],
+  imports: [WorkspaceCard, ProjectPanel, WorktreePanel, LooseSessionPanel, BulkArchivePanel, NewProjectPanel,
+    NoxServersPanel, TerminalDock, DiffViewer, EntryView, AgoPipe],
   templateUrl: './app.html',
   styleUrl: './app.css',
   host: { '(document:keydown)': 'onKey($event)' },
@@ -58,6 +61,8 @@ export class App {
   protected readonly multi = signal<string[]>([]);
   /** The panel shows the New project form instead of the selection. */
   protected readonly creating = signal(false);
+  /** The Nox Lumos servers panel is open (it lives in the service so a project's section can open it). */
+  protected readonly nox = inject(NoxService);
   /** Last loose session clicked: where a Shift+click range starts. */
   private anchor: string | null = null;
   protected readonly now = this.api.now;
@@ -180,6 +185,7 @@ export class App {
   protected selectWorktree(path: string) {
     this.multi.set([]);
     this.creating.set(false);
+    this.nox.managing.set(false);
     this.selected.set({ kind: 'worktree', path });
   }
 
@@ -193,7 +199,14 @@ export class App {
 
   protected startCreating() {
     this.multi.set([]);
+    this.nox.managing.set(false);
     this.creating.set(true);
+  }
+
+  protected manageNox() {
+    this.multi.set([]);
+    this.creating.set(false);
+    this.nox.managing.set(!this.nox.managing());
   }
 
   /** New repo: select its main worktree. A converted folder opens on the Git tab to review its files. */
@@ -241,6 +254,7 @@ export class App {
   protected selectProject(path: string) {
     this.multi.set([]);
     this.creating.set(false);
+    this.nox.managing.set(false);
     this.selected.set({ kind: 'project', path });
   }
 
@@ -441,6 +455,11 @@ export class App {
     // The New project form owns the keyboard while it's open (Esc closes it).
     if (this.creating()) {
       if (e.key === 'Escape') this.creating.set(false);
+      return;
+    }
+    // So does the Nox Lumos servers panel.
+    if (this.nox.managing()) {
+      if (e.key === 'Escape') this.nox.managing.set(false);
       return;
     }
 

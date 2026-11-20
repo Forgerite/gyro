@@ -1,4 +1,4 @@
-// Gyro's own small persistent state (closed projects, GitHub links, dev commands, base branches, port leases), in ~/.claude/gyro/state.json.
+// Gyro's own small persistent state (closed projects, GitHub links, Nox Lumos servers and links, dev commands, base branches, port leases), in ~/.claude/gyro/state.json.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { DATA_DIR } from './data-dir.mjs';
 import { dirname, join } from 'node:path';
@@ -17,9 +17,11 @@ function load() {
       dev: s.dev && typeof s.dev === 'object' ? s.dev : {},
       base: s.base && typeof s.base === 'object' ? s.base : {},
       ports: s.ports && typeof s.ports === 'object' ? s.ports : {},
+      noxServers: s.noxServers && typeof s.noxServers === 'object' ? s.noxServers : {},
+      noxLinks: s.noxLinks && typeof s.noxLinks === 'object' ? s.noxLinks : {},
     };
   } catch {
-    return { closedProjects: [], github: {}, dev: {}, base: {}, ports: {} };
+    return { closedProjects: [], github: {}, dev: {}, base: {}, ports: {}, noxServers: {}, noxLinks: {} };
   }
 }
 
@@ -90,5 +92,42 @@ export function getBase(path) {
 export function setBase(path, ref) {
   const { [norm(path)]: _, ...rest } = state.base;
   state = { ...state, base: ref === null ? rest : { ...rest, [norm(path)]: ref } };
+  save();
+}
+
+/** Nox Lumos servers: { id: { id, name, url, key, addedAt } }. The key never leaves this machine's API process. */
+export function allNoxServers() {
+  return state.noxServers;
+}
+
+export function getNoxServer(id) {
+  return state.noxServers[id] ?? null;
+}
+
+/** Add or replace a server, or remove it (and every project's link to it) with null. */
+export function setNoxServer(id, server) {
+  const { [id]: _, ...rest } = state.noxServers;
+  const noxLinks = server ? state.noxLinks : Object.fromEntries(Object.entries(state.noxLinks).filter(([, l]) => l.server !== id));
+  state = { ...state, noxServers: server ? { ...rest, [id]: server } : rest, noxLinks };
+  save();
+}
+
+/**
+ * All project links: { normalized repo path: { server, name, repo?, auto? } } (name: the project's, for the servers
+ * list; auto: made by matching repos), or { off: true, name } for a project unlinked by hand.
+ */
+export function allNoxLinks() {
+  return state.noxLinks;
+}
+
+/** The project's Nox Lumos link: { server: id, name, repo? } (repo overrides the linked GitHub repo), or null. */
+export function getNoxLink(path) {
+  return state.noxLinks[norm(path)] ?? null;
+}
+
+/** Link a project to a Nox Lumos server, or unlink it with null. */
+export function setNoxLink(path, link) {
+  const { [norm(path)]: _, ...rest } = state.noxLinks;
+  state = { ...state, noxLinks: link ? { ...rest, [norm(path)]: link } : rest };
   save();
 }
