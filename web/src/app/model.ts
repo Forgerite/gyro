@@ -322,7 +322,8 @@ export interface NoxTicket {
 }
 
 export interface NoxLink {
-  server: { id: string; name: string; url: string };
+  /** canPrompt: the key may queue one-off prompts (tickets:prompt); null until the server's been checked. */
+  server: { id: string; name: string; url: string; canPrompt?: boolean | null };
   /** owner/name whose tickets are shown. */
   repo: string | null;
   /** Linked by Gyro because the server runs the project's repo, not picked by hand. */
@@ -332,6 +333,88 @@ export interface NoxLink {
   /** null until first fetched (and while the project is closed). */
   tickets: NoxTicket[] | null;
   error: string | null;
+}
+
+/** What a Lumos run decided the ticket's next step is. */
+export interface NoxConclusion {
+  kind: 'advance' | 'comment' | 'noop' | 'failed' | 'skipped';
+  at: number;
+  headline: string;
+  toStatus?: string;
+  /** The comment posted on the ticket with the decision. */
+  comment?: string;
+  reason?: string;
+  error?: string;
+  statusWrite?: 'written' | 'failed' | 'skipped';
+}
+
+/** One prompt Lumos handed Claude, and what came back (null while Claude is still on it). */
+export interface NoxExchange {
+  taskId: string;
+  prompt: string;
+  at: number;
+  response: { ok: boolean; exitCode: number | null; output: string; error?: string; at: number } | null;
+}
+
+export interface NoxTrailEntry {
+  id: number;
+  at: number;
+  type: string;
+  message: string;
+}
+
+/** One stage run of a ticket, across its retries. */
+export interface NoxRun {
+  eventId: number;
+  deliveryId: string;
+  /** The stage (Status) the run was for. */
+  status: string;
+  fromStatus?: string;
+  queueState: NoxTicket['queueState'];
+  attempts: number;
+  lastError: string | null;
+  createdAt: number;
+  updatedAt: number;
+  claude: NoxExchange[];
+  conclusion: NoxConclusion | null;
+  trail: NoxTrailEntry[];
+  /** Set when the run was a one-off prompt someone asked, not a stage run. */
+  prompt?: { text: string; requestedBy: string };
+}
+
+/** The ticket's card on its GitHub Project: GET /api/nox/ticket/status. itemId null: on no board. */
+export interface NoxTicketStatus {
+  itemId: string | null;
+  project: { owner: string; number: number } | null;
+  boardUrl?: string;
+  options: { id: string; name: string; color: string | null; done: boolean }[];
+  statusId: string | null;
+}
+
+/** A ticket as its Nox Lumos server has it: GET /api/nox/ticket. */
+export interface NoxTicketDetail {
+  ticket: {
+    issueNodeId: string;
+    repo: string;
+    number: number;
+    title: string;
+    url: string;
+    issueType?: string;
+    status: string;
+    since: number;
+    queueState: NoxTicket['queueState'];
+    attempts: number;
+    lastError: string | null;
+    runs: number;
+    updatedAt: number;
+    conclusion: NoxConclusion | null;
+  };
+  /** Newest first. */
+  runs: NoxRun[];
+  /** Trail rows for the ticket that belong to no run, oldest first. */
+  other: NoxTrailEntry[];
+  /** When Gyro fetched it. */
+  at: number;
 }
 
 /** A Nox Lumos server added to Gyro. Its API key stays in the Gyro API; only the prefix comes out. */
@@ -352,6 +435,7 @@ export interface NoxServer {
     keyName?: string | null;
     auth?: 'key' | 'jwt' | null;
     scopes?: string[];
+    permissions?: string[];
     repos?: string[];
   };
 }
@@ -400,8 +484,11 @@ export function isWorking(status: string | undefined): boolean {
  * `path` is the repo or worktree path (the main worktree shares the repo's, hence the kind), or the session id.
  */
 export interface Selection {
-  kind: 'project' | 'worktree' | 'session';
+  kind: 'project' | 'worktree' | 'session' | 'ticket';
+  /** A folder, a session id, or (for a ticket) the issue's node id. */
   path: string;
+  /** For a ticket: its project, so the panel stays put once the ticket leaves Lumos's stages. */
+  project?: string;
 }
 
 /** Loose sessions: live or recent ones show on the tile; older ones sit behind "+N older". */

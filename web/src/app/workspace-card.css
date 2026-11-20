@@ -171,7 +171,6 @@ app-wt-flags { justify-content: flex-end; }
 .nox-server { font-weight: 400; text-transform: none; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .nox-err { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--danger); }
 .nox-note { margin: 1px 8px 2px 24px; font-size: 11px; color: var(--muted); }
-a.nox-row { color: var(--text); text-decoration: none; }
 .nox-row .name { font-variant-numeric: tabular-nums; }
 /* Ticket rows: number, Status chip, title + why; no git-flags column. */
 .nox-row { grid-template-columns: 10px auto auto minmax(0, 1fr) 0 26px; }

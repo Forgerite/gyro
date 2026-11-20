@@ -56,6 +56,7 @@
         [selected]="selected()"
         (select)="selectWorktree($event)"
         (selectProject)="selectProject($event)"
+        (selectTicket)="selectTicket(ws.path, $event)"
         (activate)="activate($event)"
         [multi]="multi()"
         (pickSession)="pickSession($event)"
@@ -114,6 +115,8 @@
       <app-worktree-panel [ws]="sel!.ws" [wt]="sel!.wt!" [term]="selectedTerm()" [now]="now()" (open)="open($event)" (up)="up()" />
     } @else if (sel?.kind === 'session') {
       <app-loose-session-panel [ws]="sel!.ws" [session]="sel!.s!" [term]="selectedTerm()" [now]="now()" (open)="open($event)" (up)="up()" />
+    } @else if (sel?.kind === 'ticket') {
+      <app-nox-ticket-panel [ws]="sel!.ws" [ticketId]="selected()!.path" [ticket]="sel!.t" [now]="now()" (up)="up()" />
     } @else if (sel?.kind === 'project') {
       <app-project-panel [ws]="sel!.ws" [now]="now()" (open)="open($event)" (pick)="selectWorktree($event)" (started)="sessionStarted($event)" (closeProject)="setClosed(sel!.ws.path, $event)" />
     } @else {

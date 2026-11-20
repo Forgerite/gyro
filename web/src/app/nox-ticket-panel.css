@@ -1,0 +1,86 @@
+:host { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+a.act { text-decoration: none; }
+/* No ticket on the tile (it left Lumos's stages): a dashed band, like a closed session. */
+.none .band { border-style: dashed; }
+.none .dot { background: transparent; border: 1.5px dashed var(--quiet); box-sizing: border-box; }
+.err { color: var(--danger); white-space: pre-wrap; }
+.act-err { color: var(--danger); font-size: 11px; white-space: pre-wrap; margin: 0; }
+footer .link { white-space: nowrap; flex: none; }
+footer .link:disabled { opacity: 0.6; cursor: default; }
+
+h4 { margin: 6px 0 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+h4 .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+/* The newest run's decision, up top: what Lumos did last. */
+.concl { border-left: 2px solid var(--quiet); }
+.concl strong { color: var(--text); font-weight: 600; }
+.concl.failed { border-left-color: var(--danger); }
+.concl .comment { margin-top: 6px; max-height: 240px; overflow-y: auto; }
+
+.run { border: 1px solid var(--border); border-radius: 5px; background: var(--panel); }
+.run > summary {
+  display: grid;
+  grid-template-columns: 8px auto auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+.run > summary::-webkit-details-marker { display: none; }
+.run > summary::before { content: '▸'; color: var(--muted); }
+.run[open] > summary::before { content: '▾'; }
+.run[open] > summary { border-bottom: 1px solid var(--border); }
+.run > summary:focus-visible, .prompt > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.stage { color: var(--text); white-space: nowrap; }
+.headline { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.age { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.qs { font-size: 10px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-2); white-space: nowrap; }
+.qs.processing, .qs.pending { color: var(--busy); border-color: var(--busy); }
+.qs.dead { color: var(--danger); border-color: var(--danger); }
+
+.run-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; }
+.run-body .msg { background: var(--bg); }
+.run-body .note { margin: 0; }
+.prompt > summary { cursor: pointer; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt .msg.user { margin-top: 4px; max-height: 320px; }
+.who.inline { display: inline; margin: 0 4px 0 0; }
+.reply { max-height: 360px; overflow-y: auto; }
+.reply.failed { border-left: 2px solid var(--danger); }
+.reply.pending { color: var(--muted); font-style: italic; }
+
+.trail { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; font-size: 11px; }
+.trail li { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px; }
+.trail .age { text-align: right; }
+.tmsg { color: var(--text-2); overflow-wrap: anywhere; }
+
+/* Status: a picker in the facts list; moving the card is how Lumos is told to run a stage. */
+.status-pick { font: inherit; font-size: 11px; padding: 1px 4px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; max-width: 60%; }
+.status-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.status-pick:disabled { opacity: 0.6; }
+.facts dd { flex-wrap: wrap; }
+
+/* A prompt someone asked, at the top of its run. */
+.msg.asked { max-height: 200px; }
+
+/* Talk to the ticket: comment on GitHub, or a one-off prompt to Lumos. */
+.compose { flex: none; display: grid; gap: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.compose textarea {
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 44px;
+  max-height: 40vh;
+  padding: 6px 8px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.compose textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.compose-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.compose-acts .act { padding: 4px 12px; font-size: 12px; }
+.compose-acts .act:disabled { opacity: 0.5; cursor: default; }
+.compose-acts .hint { margin-left: auto; }
+.compose-acts .hint a { color: var(--accent); }
+kbd { font: inherit; font-size: 10px; padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; }

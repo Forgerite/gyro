@@ -121,14 +121,22 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessio
           <ul>
             @for (t of n.tickets; track t.id) {
               <li>
-                <a [class]="'row nox-row ' + t.state" [href]="t.url" target="_blank" rel="noopener" [title]="t.title + ' — ' + t.label">
+                <button
+                  type="button"
+                  [id]="'nt-' + t.id"
+                  [class]="'row nox-row ' + t.state"
+                  [class.selected]="isSel('ticket', t.id)"
+                  [attr.aria-pressed]="isSel('ticket', t.id)"
+                  [title]="t.title + ' — ' + t.label"
+                  (click)="selectTicket.emit(t.id)"
+                >
                   <span class="dot" role="img" [attr.aria-label]="t.state === 'busy' ? 'Lumos is on it' : 'Lumos is paused'"></span>
                   <span class="name">#{{ t.number }}</span>
                   <span class="stagechip">{{ t.status }}</span>
                   <span class="title">{{ t.title }} <span class="why">· {{ t.label }}</span></span>
                   <span></span>
                   <span class="age">{{ t.updatedAt | ago: now() }}</span>
-                </a>
+                </button>
               </li>
             }
           </ul>
@@ -146,6 +154,8 @@ export class WorkspaceCard {
   readonly now = input.required<number>();
   readonly select = output<string>();
   readonly selectProject = output<string>();
+  /** A Nox Lumos ticket row clicked: its issue node id. */
+  readonly selectTicket = output<string>();
   readonly activate = output<string>();
   /** Loose session clicked: plain = select it, Ctrl/Cmd = add/remove from the multi-selection, Shift = range. */
   readonly pickSession = output<SessionPick>();
