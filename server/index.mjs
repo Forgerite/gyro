@@ -20,9 +20,12 @@ import { evaluatePlan } from './plan.mjs';
 import { worktreeHome } from './worktrees.mjs';
 import { attachPtySocket, closeShell, closeTerm, detectDev, findTerm, hasTerms, killAllTerms, listTerms, sendPrompt, startDev, startShell, startTerm, stopDev } from './pty.mjs';
 import { resolvePorts } from '../scripts/worktree-ports.mjs';
+import { listenDashboard, serveStatic, viaDashboard } from './static.mjs';
 
 const ports = await resolvePorts();
 const PORT = Number(process.env.GYRO_PORT ?? ports.api);
+// Set by `npm run serve`: the built dashboard, which the API then serves on the dashboard's port itself.
+const STATIC_DIR = process.env.GYRO_STATIC ? resolve(process.env.GYRO_STATIC) : null;
 const CODE_ROOT = resolve(process.env.GYRO_ROOT ?? join(homedir(), 'Documents', 'code'));
 // Browsers send Origin on cross-site POSTs and WebSocket upgrades; anything else is refused.
 const ALLOWED_ORIGINS = new Set(
@@ -943,8 +946,20 @@ async function termAction({ action, path, sessionId, prompt, entry, number, id }
 
 const server = createServer(async (req, res) => {
   try {
+    if (viaDashboard(req) && !req.url.startsWith('/api/')) {
+      // Reports stay on the API's own origin (see /api/reports): never beside the dashboard.
+      if ((req.method === 'GET' || req.method === 'HEAD') && !req.url.startsWith('/report/')) return await serveStatic(STATIC_DIR, req, res);
+      return send(res, 404, { error: 'not found' });
+    }
     if (req.method === 'GET' && req.url === '/api/snapshot') return send(res, 200, await snapshot());
     if (req.method === 'GET' && req.url === '/api/health') return send(res, 200, health());
+    // The last exchange of a session the snapshot sent without it (textOmitted).
+    if (req.method === 'GET' && req.url.startsWith('/api/session/text?')) {
+      const id = new URL(req.url, 'http://localhost').searchParams.get('id') ?? '';
+      if (!UUID.test(id)) return send(res, 400, { error: 'bad session id' });
+      const text = await scan('sessionText', id);
+      return text ? send(res, 200, text) : send(res, 404, { error: 'unknown session' });
+    }
     if (req.method === 'GET' && req.url.startsWith('/api/worktree/check?')) {
       const path = new URL(req.url, 'http://localhost').searchParams.get('path');
       return send(res, 200, await teardownPlan(path));
@@ -1386,6 +1401,7 @@ server.on('upgrade', (req, socket) => {
 });
 loadExcludedPorts();
 server.listen(PORT, '127.0.0.1', () => console.log(`Gyro api on http://127.0.0.1:${PORT} (root ${CODE_ROOT})`));
+if (STATIC_DIR) listenDashboard(server, ports.web);
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => (killAllTerms(), process.exit(0)));
 // node-pty's Windows agent throws from async callbacks; one bad terminal shouldn't take the dashboard down.
 process.on('uncaughtException', (e) => console.error('[uncaught]', e));

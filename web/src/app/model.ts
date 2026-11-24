@@ -20,7 +20,8 @@ export interface Session {
   lastRole?: 'user' | 'assistant' | 'tool';
   lastAssistant?: string;
   lastUser?: string;
-  lastPrompt?: string;
+  /** The snapshot left lastUser/lastAssistant out (not the session on show); GET /api/session/text has them. */
+  textOmitted?: boolean;
   lastTool?: string;
   pr?: { number: number; url: string };
   sizeBytes: number;

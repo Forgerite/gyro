@@ -156,7 +156,7 @@ export class TestReport {
       if (!running && was) untracked(() => this.res.reload());
       was = running;
     });
-    const id = setInterval(() => (this.res.reload(), this.recs.reload()), POLL_MS);
+    const id = setInterval(() => document.hidden || (this.res.reload(), this.recs.reload()), POLL_MS);
     inject(DestroyRef).onDestroy(() => clearInterval(id));
   }
 

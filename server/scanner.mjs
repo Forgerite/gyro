@@ -96,26 +96,31 @@ function sessionBases(list) {
 async function worktreeStatus(path, trunk) {
   if (removing.has(norm(path))) return statusCache.get(norm(path))?.git ?? { missing: true };
   try {
-    const files = (await git(path, 'status', '--porcelain=v1')).split(/\r?\n/).filter(Boolean);
-    // Commits on HEAD that trunk doesn't contain. Note: squash-merged branches still count as unmerged.
-    const unmerged = trunk
-      ? Number((await git(path, 'rev-list', '--count', `${trunk}..HEAD`).catch(() => '0')).trim())
-      : 0;
+    // Every git launch costs CPU (and a Defender scan) on Windows, so each call here earns its place.
+    // v2 --branch adds HEAD, branch and upstream ahead/behind as `# ` headers: no separate @{u} calls.
+    const lines = (await git(path, 'status', '--porcelain=v2', '--branch')).split(/\r?\n/).filter(Boolean);
+    const header = (key) => lines.find((l) => l.startsWith(`# branch.${key} `))?.slice(`# branch.${key} `.length);
+    const files = lines.filter((l) => !l.startsWith('#'));
+    const oid = header('oid');
+    const branch = header('head');
+    // branch.ab is only there when the upstream resolves (a deleted remote branch has upstream but no ab).
+    const ab = /^\+(\d+) -(\d+)$/.exec(header('ab') ?? '');
+    const upstream = ab ? { exists: true, ahead: Number(ab[1]), behind: Number(ab[2]) } : null;
     // How far HEAD is behind the work session's base (vs local refs as of the last fetch).
     // null: the base ref doesn't resolve here — the plan shows that, never a silent "up to date".
     const baseRef = sessionBaseMap.get(norm(path)) ?? trunk;
-    const behindBase = baseRef
-      ? await git(path, 'rev-list', '--count', `HEAD..${baseRef}`).then((out) => Number(out.trim()), () => null)
-      : null;
-    // The branch's upstream, for push-ness (same counts as gitdetail's branchSync, trimmed).
-    let upstream = null;
-    if (await git(path, 'rev-parse', '--verify', '--quiet', '@{u}').then(() => true, () => false)) {
-      const counts = (await git(path, 'rev-list', '--left-right', '--count', 'HEAD...@{u}').catch(() => '')).trim().split(/\s+/);
-      upstream = { exists: true, ahead: Number(counts[0]) || 0, behind: Number(counts[1]) || 0 };
-    }
+    // left: on trunk but not HEAD; right: on HEAD but not trunk. One call answers both counts when base is trunk.
+    const counts = (ref) => git(path, 'rev-list', '--left-right', '--count', `${ref}...HEAD`)
+      .then((out) => out.trim().split(/\s+/).map(Number), () => null);
+    const vsTrunk = trunk ? await counts(trunk) : null;
+    // Commits on HEAD that trunk doesn't contain. Note: squash-merged branches still count as unmerged.
+    const unmerged = vsTrunk?.[1] ?? 0;
+    const behindBase = !baseRef ? null : baseRef === trunk ? (vsTrunk?.[0] ?? null) : ((await counts(baseRef))?.[0] ?? null);
     // A brand-new repo has no commits yet (unborn HEAD): that's not "missing".
     const lastCommit = (await git(path, 'log', '-1', '--format=%ct%x09%s').catch(() => '')).trim().split('\t');
     return {
+      head: oid && oid !== '(initial)' ? oid.slice(0, 7) : null,
+      branch: branch && branch !== '(detached)' ? branch : null,
       dirty: files.length,
       unmerged,
       trunk,
@@ -307,10 +312,40 @@ const trunkCache = new Map(); // repo -> { at, trunk }
 // re-checked rarely and only active ones (recent session, live session, or uncommitted work) often.
 const HOT_TTL = 15_000;
 const COLD_TTL = 5 * 60_000;
-const LIST_TTL = 60_000;
+// The list is re-read as soon as .git/worktrees changes; this only catches what that misses (a deleted folder).
+const LIST_TTL = 5 * 60_000;
 const listCache = new Map(); // repo -> { at, worktrees }
 const statusCache = new Map(); // norm(worktree path) -> { at, git }
 let hotPaths = new Set(); // norm(path) of active worktrees, from the last snapshot
+
+const mtime = (file) => stat(file).then((st) => st.mtimeMs, () => 0);
+
+const gitDirs = new Map(); // norm(worktree path) -> its git dir (repo/.git, or repo/.git/worktrees/<name>)
+async function gitDirOf(path) {
+  const key = norm(path);
+  if (gitDirs.has(key)) return gitDirs.get(key);
+  let dir = null;
+  try {
+    const dotGit = join(path, '.git');
+    if ((await stat(dotGit)).isDirectory()) dir = dotGit;
+    else {
+      const m = /^gitdir:\s*(.+)$/m.exec(await readFile(dotGit, 'utf8'));
+      if (m) dir = resolve(path, m[1].trim());
+    }
+  } catch { /* gone */ }
+  gitDirs.set(key, dir);
+  return dir;
+}
+
+/**
+ * Moves whenever a worktree's HEAD does (commit, checkout, reset, merge, rebase: logs/HEAD and HEAD)
+ * or its index does (staging), without launching git. Unstaged edits don't move it; the TTL catches those.
+ */
+async function headSignature(path) {
+  const dir = await gitDirOf(path);
+  if (!dir) return null;
+  return (await Promise.all(['logs/HEAD', 'HEAD', 'index'].map((f) => mtime(join(dir, f))))).join('|');
+}
 
 /**
  * Stale-while-revalidate: callers get the last scan immediately and a refresh runs in the
@@ -365,10 +400,12 @@ async function scanWorkspaces() {
   const data = await Promise.all(repos.map(async (repo) => {
     let worktrees = [];
     const listed = listCache.get(repo);
-    if (listed && Date.now() - listed.at < LIST_TTL) worktrees = listed.worktrees.map((wt) => ({ ...wt }));
+    // Adding or removing a worktree adds or removes a folder in .git/worktrees, which moves its mtime.
+    const listSig = await mtime(join(repo, '.git', 'worktrees'));
+    if (listed && listed.sig === listSig && Date.now() - listed.at < LIST_TTL) worktrees = listed.worktrees.map((wt) => ({ ...wt }));
     else {
       try { worktrees = parseWorktrees(await git(repo, 'worktree', 'list', '--porcelain')); } catch { /* broken repo */ }
-      listCache.set(repo, { at: Date.now(), worktrees: worktrees.map((wt) => ({ ...wt })) });
+      listCache.set(repo, { at: Date.now(), sig: listSig, worktrees: worktrees.map((wt) => ({ ...wt })) });
     }
     const { trunk, detected, missing, remotes } = await cachedTrunk(repo);
     await Promise.all(worktrees.map(async (wt) => {
@@ -376,11 +413,20 @@ async function scanWorkspaces() {
       wt.name = wt.isMain ? '(main)' : basename(wt.path);
       const key = norm(wt.path);
       const cached = statusCache.get(key);
-      const ttl = hotPaths.has(key) || cached?.git.dirty ? HOT_TTL : COLD_TTL;
-      if (cached && Date.now() - cached.at < ttl) wt.git = cached.git;
+      // Uncommitted changes alone don't make a worktree hot: many sit dirty for months. Commits,
+      // checkouts and staging in a quiet one still show at once, through its git files' mtimes.
+      const ttl = hotPaths.has(key) ? HOT_TTL : COLD_TTL;
+      const sig = await headSignature(wt.path);
+      if (cached && cached.sig === sig && Date.now() - cached.at < ttl) wt.git = cached.git;
       else {
         wt.git = await worktreeStatus(wt.path, trunk);
-        statusCache.set(key, { at: Date.now(), git: wt.git });
+        statusCache.set(key, { at: Date.now(), sig, git: wt.git });
+      }
+      // Status reads HEAD and branch too, fresher than the (rarely re-read) worktree list.
+      if (wt.git.head !== undefined && !wt.prunable) {
+        wt.head = wt.git.head ?? wt.head;
+        wt.branch = wt.git.branch;
+        wt.detached = !wt.git.branch;
       }
     }));
     // trunk: what work branches from and PRs into. detectedTrunk: what git alone says. baseMissing: a set base that no longer resolves.
@@ -451,7 +497,8 @@ async function snapshot() {
 
   for (const s of sessions) {
     const l = live.get(s.id);
-    const session = { ...s, file: undefined, background: undefined, live: l ? { ...l, background: runningBackground(s, l) } : null };
+    // lastPrompt only feeds the title (done above, in readSession).
+    const session = { ...s, file: undefined, background: undefined, lastPrompt: undefined, live: l ? { ...l, background: runningBackground(s, l) } : null };
     if (l?.name && !s.customTitle) session.title = l.name;
     const cwd = norm(l?.cwd ?? s.cwd ?? '');
     const owner = worktreeHome(out, cwd);
@@ -476,6 +523,8 @@ async function snapshot() {
   const hot = new Set();
   for (const [key, wt] of byPath) {
     wt.sessions.sort((a, b) => rank(b) - rank(a) || b.lastActivity - a.lastActivity);
+    // The panel shows the top session's last exchange; an earlier one's is fetched when opened (sessionText).
+    wt.sessions.slice(1).forEach(dropText);
     wt.lastActivity = Math.max(wt.sessions[0]?.lastActivity ?? 0, wt.git.lastCommitAt ?? 0);
     if (wt.sessions.some((s) => s.live) || Date.now() - wt.lastActivity < 86_400_000) hot.add(key);
   }
@@ -486,7 +535,26 @@ async function snapshot() {
   }
   out.sort((a, b) => b.lastActivity - a.lastActivity);
   unmatched.sort((a, b) => b.lastActivity - a.lastActivity);
+  unmatched.forEach(dropText); // listed only, never opened in a panel
   return { generatedAt: Date.now(), root: CODE_ROOT, workspaces: out, unmatched: unmatched.slice(0, 50) };
+}
+
+/**
+ * The last exchange is most of a snapshot's bytes, and the snapshot is re-sent every few seconds;
+ * sessions nobody is looking at go without it (`textOmitted`), and sessionText hands it over on demand.
+ */
+function dropText(s) {
+  if (!s.lastUser && !s.lastAssistant) return;
+  s.lastUser = s.lastAssistant = undefined;
+  s.textOmitted = true;
+}
+
+/** One session's last exchange, from the session cache (what dropText left out of the snapshot). */
+async function sessionText(id) {
+  for (const { data } of sessionCache.values()) {
+    if (data.id === id) return { lastUser: data.lastUser ?? null, lastAssistant: data.lastAssistant ?? null };
+  }
+  return null;
 }
 
 
@@ -549,6 +617,7 @@ async function invalidateRepo(repo) {
   // Compare normalized: git reports C:/x/y while the scan keys are C:\x\y.
   for (const key of listCache.keys()) if (norm(key) === norm(repo)) listCache.delete(key);
   for (const key of statusCache.keys()) if (key.startsWith(norm(repo))) statusCache.delete(key);
+  for (const key of gitDirs.keys()) if (key.startsWith(norm(repo))) gitDirs.delete(key);
   await loadWorkspaces({ fresh: true }); // other repos stay cached, so this is quick
 }
 
@@ -558,7 +627,7 @@ function removingWorktree({ path, on }) {
   else removing.delete(norm(path));
 }
 
-const ops = { snapshot, findWorktree, touch, archiveByIds, invalidateRepo, orphans, removingWorktree, sessionBases, projectBases };
+const ops = { snapshot, findWorktree, touch, archiveByIds, invalidateRepo, orphans, removingWorktree, sessionBases, projectBases, sessionText };
 
 parentPort.on('message', async ({ id, op, arg }) => {
   try {
