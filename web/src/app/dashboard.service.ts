@@ -4,6 +4,11 @@ import { Observable, tap } from 'rxjs';
 import { ChangedFile, CommitInfo, EntryTarget, PrDetail, Session, Snapshot, State, Term, WorkStepKey, WorkView, Worktree, looseState, sessionState } from './model';
 
 const POLL_MS = 3000;
+/**
+ * While the tab is hidden (minimized, behind another tab): each snapshot can make the server run git
+ * across every worktree, so it slows right down, but keeps going so the "checks went green" chime still sounds.
+ */
+const HIDDEN_POLL_MS = 30_000;
 const PANEL_TAB_KEY = 'gyro.panelTab';
 const DIFF_MODE_KEY = 'gyro.diffMode';
 const DOCK_OPEN_KEY = 'gyro.dockOpen';
@@ -131,8 +136,17 @@ export class DashboardService {
 
   constructor() {
     this.refresh();
-    const id = setInterval(() => this.refresh(), POLL_MS);
-    inject(DestroyRef).onDestroy(() => clearInterval(id));
+    let last = Date.now();
+    const poll = () => {
+      if (document.hidden && Date.now() - last < HIDDEN_POLL_MS - POLL_MS / 2) return;
+      last = Date.now();
+      this.refresh();
+    };
+    const id = setInterval(poll, POLL_MS);
+    // Back in view: catch up at once rather than on the next tick.
+    const shown = () => !document.hidden && Date.now() - last > POLL_MS / 2 && poll();
+    document.addEventListener('visibilitychange', shown);
+    inject(DestroyRef).onDestroy(() => (clearInterval(id), document.removeEventListener('visibilitychange', shown)));
   }
 
   refresh(): void {

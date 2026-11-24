@@ -2,7 +2,15 @@
 
 `npm run dev` runs the API (`server/`) and the Angular dashboard (`web/`) together, restarting the API whenever a file under `server/` changes.
 
-`npm run serve` is the same without that restart. Use it for the dashboard you work in: the embedded terminals live inside the API process, so every restart kills all running sessions.
+`npm run serve` is for the dashboard you work in: the embedded terminals live inside the API process, so every restart kills all running sessions. It doesn't restart on changes, and it doesn't run `ng serve` (about 1 GB): it builds `web/` once and the API serves `web/dist` on the dashboard's port itself (`GYRO_STATIC`, `server/static.mjs`). To pick up dashboard changes without killing terminals, run `npm run build --prefix web` and reload the page.
+
+## Idle cost
+
+Gyro is left open all day, so polling has to stay cheap. On Windows every git launch costs about 20 ms of CPU plus a Defender scan.
+
+- The dashboard polls `/api/snapshot` every 3 s, and every 30 s while its tab is hidden.
+- The scanner (`server/scanner.mjs`) re-runs git status every 15 s only for hot worktrees (a live or recent session or commit, or one being viewed), and every 5 min for the rest. Commits, checkouts and staging show at once anyway, through the mtimes of the worktree's `logs/HEAD`, `HEAD` and `index`. Uncommitted changes alone don't make a worktree hot.
+- Snapshots carry the last exchange only for each worktree's top session; the rest are marked `textOmitted` and fetched from `/api/session/text` when opened.
 
 ## Ports
 

@@ -1,4 +1,5 @@
 import { Component, computed, inject, input, output, signal } from '@angular/core';
+import { httpResource } from '@angular/common/http';
 import { DashboardService } from './dashboard.service';
 import { AgoPipe } from './ago.pipe';
 import { GitTab } from './git-tab';
@@ -90,7 +91,7 @@ export type OpenRequest = {
             @if (s.lastUser) { <div class="msg user"><span class="who">you</span>{{ s.lastUser }}</div> }
             @if (s.lastAssistant) { <div class="msg"><span class="who">claude</span>{{ s.lastAssistant }}</div> }
             @if (s.lastRole === 'tool' && state === 'busy') { <div class="tool">running {{ s.lastTool }}…</div> }
-            @if (!s.lastUser && !s.lastAssistant) { <p class="muted">No messages yet.</p> }
+            @if (!s.lastUser && !s.lastAssistant && !s.textOmitted) { <p class="muted">No messages yet.</p> }
           </div>
         </section>
         @if (!running()) {
@@ -241,9 +242,21 @@ export class WorktreePanel {
   /** Server sorts live-first, then most recent. */
   protected readonly current = computed(() => this.wt().sessions[0]);
   protected readonly earlier = computed(() => this.wt().sessions.slice(1));
-  protected readonly shown = computed(
+  private readonly picked = computed(
     () => this.wt().sessions.find((s) => s.id === this.viewingId()) ?? this.current(),
   );
+  /** An earlier session's last exchange isn't in the snapshot (textOmitted); fetched when one is opened. */
+  // A string, so the 3s poll's fresh session objects don't refetch: only a new session or new activity does.
+  private readonly omittedUrl = computed(() => {
+    const s = this.picked();
+    return s?.textOmitted ? `/api/session/text?id=${s.id}&at=${s.lastActivity}` : undefined;
+  });
+  private readonly omitted = httpResource<{ lastUser: string | null; lastAssistant: string | null }>(() => this.omittedUrl());
+  protected readonly shown = computed(() => {
+    const s = this.picked();
+    const t = s?.textOmitted ? this.omitted.value() : undefined;
+    return s && t ? { ...s, textOmitted: false, lastUser: t.lastUser ?? undefined, lastAssistant: t.lastAssistant ?? undefined } : s;
+  });
   protected readonly api = inject(DashboardService);
   /** The PR tab only exists for projects linked to GitHub; elsewhere it falls back to the session. */
   protected readonly tab = computed(() => {
