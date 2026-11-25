@@ -1,7 +1,7 @@
 import { Component, ElementRef, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { AgoPipe } from './ago.pipe';
 import { DashboardService, QuickLayout } from './dashboard.service';
-import { LOOSE_RECENT_MS, Selection, Session, Workspace, Worktree } from './model';
+import { LOOSE_RECENT_MS, Selection, Session, Workspace, Worktree, externalHolds, splitWorktrees } from './model';
 import { TerminalDock } from './terminal-dock';
 import { ChimeService } from './chime.service';
 import { NewSession } from './new-session';
@@ -16,10 +16,10 @@ import { ProjectPanel } from './project-panel';
 import { OpenRequest, WorktreePanel } from './worktree-panel';
 import { SessionPick, WorkspaceCard } from './workspace-card';
 import { BulkArchivePanel, PickedSession } from './bulk-archive-panel';
+import { ShortcutsDialog } from './shortcuts-dialog';
+import { GoneSessionPanel } from './gone-session-panel';
 
 const STALE_MS = 14 * 86_400_000;
-/** The waiting band lists sessions waiting this recently (or still running). */
-const WAITING_FRESH_MS = 86_400_000;
 const DOCK_KEY = 'gyro.dockHeight';
 const MAIN_KEY = 'gyro.showMain';
 const DOCK_MIN = 120;
@@ -42,7 +42,7 @@ const QUICK_LAYOUTS: readonly { id: QuickLayout; label: string; key: string; x: 
 @Component({
   selector: 'app-root',
   imports: [WorkspaceCard, ProjectPanel, WorktreePanel, LooseSessionPanel, BulkArchivePanel, NewProjectPanel,
-    NoxServersPanel, NoxTicketPanel, TerminalDock, DiffViewer, EntryView, AgoPipe],
+    NoxServersPanel, NoxTicketPanel, TerminalDock, DiffViewer, EntryView, ShortcutsDialog, GoneSessionPanel, AgoPipe],
   templateUrl: './app.html',
   styleUrl: './app.css',
   host: { '(document:keydown)': 'onKey($event)' },
@@ -76,6 +76,8 @@ export class App {
   /** The detail panel's width as last dragged; expanded, it takes everything but a column of tiles. */
   protected readonly detailWidth = signal(loadDetailWidth());
   protected readonly detailWide = signal(false);
+  /** The keyboard shortcuts modal is open. */
+  protected readonly showKeys = signal(false);
 
   /** Dock terminal for the selected worktree, if one exists. */
   protected readonly selectedTerm = computed(() => {
@@ -114,37 +116,27 @@ export class App {
   });
 
   /**
-   * Worktrees waiting on you right now, longest wait first: the band above the tiles, jumped to with 1–9.
-   * Only a running session or one active in the last day: a conversation left weeks ago isn't a queue.
+   * Display order for keyboard navigation, as the cards list it: each project header, its Gyro sessions,
+   * then (only while its External section is open) the worktrees and Claude sessions under External.
    */
-  protected readonly waitingRows = computed(() => {
-    const since = this.now() - WAITING_FRESH_MS;
-    return this.workspaces()
-      .filter((ws) => !ws.closed)
-      .flatMap((ws) => ws.worktrees
-        .filter((wt) => this.api.worktreeState(wt) === 'waiting' && (!!wt.sessions[0]?.live || wt.lastActivity >= since))
-        .map((wt) => ({ ws, wt })))
-      .sort((a, b) => a.wt.lastActivity - b.wt.lastActivity)
-      .slice(0, 9);
-  });
-
-  protected jumpTo(i: number) {
-    const row = this.waitingRows()[i];
-    if (!row) return;
-    this.selectWorktree(row.wt.path);
-    document.getElementById('wt-' + row.wt.path)?.focus();
-  }
-
-  /** Display order for keyboard navigation: each project header, then its worktrees. */
   private readonly flat = computed<Selection[]>(() =>
-    this.workspaces().flatMap((ws) => ws.closed ? [{ kind: 'project' as const, path: ws.path }] : [
-      { kind: 'project' as const, path: ws.path },
-      ...ws.worktrees.map((wt) => ({ kind: 'worktree' as const, path: wt.path })),
-      ...ws.loose
-        .filter((s) => s.live || this.now() - s.lastActivity < LOOSE_RECENT_MS || s.id === this.selected()?.path)
-        .map((s) => ({ kind: 'session' as const, path: s.id })),
-      ...(ws.nox?.tickets ?? []).map((t) => ({ kind: 'ticket' as const, path: t.id, project: ws.path })),
-    ]),
+    this.workspaces().flatMap((ws) => {
+      if (ws.closed) return [{ kind: 'project' as const, path: ws.path }];
+      const sel = this.selected();
+      const { sessions, external } = splitWorktrees(ws);
+      const open = this.api.externalOpen().has(ws.path) || externalHolds(ws, sel);
+      return [
+        { kind: 'project' as const, path: ws.path },
+        ...sessions.map((wt) => ({ kind: 'worktree' as const, path: wt.path })),
+        ...(!open ? [] : [
+          ...external.map((wt) => ({ kind: 'worktree' as const, path: wt.path })),
+          ...ws.loose
+            .filter((s) => s.live || this.now() - s.lastActivity < LOOSE_RECENT_MS || s.id === sel?.path)
+            .map((s) => ({ kind: 'session' as const, path: s.id })),
+        ]),
+        ...(ws.nox?.tickets ?? []).map((t) => ({ kind: 'ticket' as const, path: t.id, project: ws.path })),
+      ];
+    }),
   );
 
   /** Resolves the selection against the latest snapshot (ignores the filter, so it survives typing). */
@@ -178,7 +170,7 @@ export class App {
     if (sel.kind === 'project') return sel.ws.path;
     if (sel.kind === 'session') return sel.s.folderExists ? (sel.s.cwd ?? null) : null;
     if (sel.kind === 'ticket') return null;
-    return sel.wt.path;
+    return sel.wt.git.missing ? null : sel.wt.path; // a Gyro session whose worktree is gone: nowhere to open
   });
 
   /** The multi-selection resolved against the latest snapshot (archived ones drop out on their own). */
@@ -449,6 +441,7 @@ export class App {
       if (first) this.selectWorktree(first.path);
       return;
     }
+    if (sel.wt.git.missing) return; // its worktree is gone: nothing to resume or start
     if (this.selectedTerm() && !this.selectedTerm()!.exited) return this.api.showTerm(sel.wt.path);
     const top = sel.wt.sessions[0];
     if (top?.live) return; // open elsewhere (e.g. Claude Desktop); resuming here would fork it
@@ -458,6 +451,8 @@ export class App {
   protected onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement;
     const typing = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
+    // The shortcuts modal owns the keyboard while it's open (the dialog closes itself on Esc).
+    if (this.showKeys()) return;
     // Single handler for Ctrl+`, including from inside xterm (which only swallows the key).
     if (e.ctrlKey && (e.code === 'Backquote' || e.key === '`')) {
       this.toggleTerminal();
@@ -487,6 +482,11 @@ export class App {
       return;
     }
     if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === '?') {
+      this.showKeys.set(true);
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'Escape' && this.api.entry()) {
       this.api.entry.set(null);
       e.preventDefault();
@@ -573,10 +573,6 @@ export class App {
         break;
       case '/':
         this.filterInput()?.nativeElement.focus();
-        break;
-      case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
-        if (Number(e.key) > this.waitingRows().length) return;
-        this.jumpTo(Number(e.key) - 1);
         break;
       default:
         return; // not ours: leave Tab, Space, etc. to the browser

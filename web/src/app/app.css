@@ -47,7 +47,6 @@ h1 .mark .hub { fill: var(--ink); stroke: none; }
 
 .spacer { flex: 1; }
 .error { color: var(--danger-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.icon-only { padding: 0 5px; }
 
 /* Focus a quadrant: four 2×2 grids, the lit cell is the quadrant. */
 .layouts { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--radius-md); background: var(--ground-2); }
@@ -61,38 +60,6 @@ h1 .mark .hub { fill: var(--ink); stroke: none; }
 .grid { overflow-y: auto; background: var(--ground-0); }
 /* Columns live on an unconstrained inner box; on the scroller itself they'd overflow sideways. */
 .cols { columns: 2 340px; column-gap: var(--space-3); padding: var(--space-3); }
-
-/* Who needs you, longest wait first; 1–9 jump to them. */
-.needs {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--signal-soft);
-  border-bottom: 1px solid var(--line);
-}
-.needs-h { display: inline-flex; align-items: center; gap: var(--space-2); margin-right: var(--space-2); color: var(--signal-ink); font-size: 12px; font-weight: 600; }
-.jump {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 var(--space-2) 0 3px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--ground-1);
-  box-shadow: inset 0 0 0 1px var(--line);
-  color: var(--ink);
-  font: 500 12px/1 var(--font-sans);
-  cursor: pointer;
-}
-.jump:hover { background: var(--ground-2); }
-.jump kbd { height: 18px; }
-.j-age { font: 400 11px/1 var(--font-mono); color: var(--ink-3); }
 
 /* ── Details (top right) ─────────────────────────────────── */
 .detail {
@@ -113,15 +80,19 @@ h1 .mark .hub { fill: var(--ink); stroke: none; }
 .splitter { grid-row: 3; }
 .dock { grid-row: 4; }
 
-/* ── Splitters: a hairline with a grip; the 5px track is the hit area ── */
-.splitter, .vsplit { position: relative; touch-action: none; background: var(--ground-0); }
-.splitter { grid-column: 1 / -1; cursor: row-resize; background: linear-gradient(var(--line), var(--line)) center / 100% 1px no-repeat; }
-.vsplit { cursor: col-resize; background: linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat; }
-.splitter::after, .vsplit::after { content: ''; position: absolute; border-radius: var(--radius-pill); background: var(--line-strong); }
-.splitter::after { left: 50%; top: 0; height: 5px; width: 28px; margin-left: -14px; }
-.vsplit::after { top: 50%; left: 0; width: 5px; height: 28px; margin-top: -14px; }
-.splitter:hover::after, .vsplit:hover::after, .vsplit:focus-visible::after { background: var(--ink); }
+/* ── Splitters: one clear hairline down the middle of the 5px track, with a grip; the hit area reaches 3px past each side ── */
+.splitter, .vsplit { --split-line: color-mix(in srgb, var(--line-strong) 60%, var(--ground-0)); position: relative; z-index: 1; touch-action: none; transition: background-color .12s; }
+.splitter { grid-column: 1 / -1; cursor: row-resize; background: linear-gradient(var(--split-line), var(--split-line)) center / 100% 1px no-repeat, var(--ground-0); }
+.vsplit { cursor: col-resize; background: linear-gradient(var(--split-line), var(--split-line)) center / 1px 100% no-repeat, var(--ground-0); }
+.splitter::before { content: ''; position: absolute; inset: -3px 0; }
+.vsplit::before { content: ''; position: absolute; inset: 0 -3px; }
+.splitter::after, .vsplit::after { content: ''; position: absolute; border-radius: var(--radius-pill); background: var(--ink-3); transition: background-color .12s; }
+.splitter::after { left: 50%; top: 1px; height: 3px; width: 40px; margin-left: -20px; }
+.vsplit::after { top: 50%; left: 1px; width: 3px; height: 40px; margin-top: -20px; }
+.splitter:hover, .splitter:active, .vsplit:hover, .vsplit:active, .vsplit:focus-visible { --split-line: var(--ink-3); background-color: var(--ground-3); }
+.splitter:hover::after, .splitter:active::after, .vsplit:hover::after, .vsplit:active::after, .vsplit:focus-visible::after { background: var(--ink); }
 .vsplit:focus-visible { outline: none; }
+@media (prefers-reduced-motion: reduce) { .splitter, .vsplit, .splitter::after, .vsplit::after { transition: none; } }
 
 .dock-closed { --split-h: 0px; }
 .dock-closed .splitter { display: none; }
@@ -144,7 +115,7 @@ h1 .mark .hub { fill: var(--ink); stroke: none; }
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; grid-template-rows: 44px 1fr auto 5px var(--dock-h, 45vh); }
   .detail { border-top: 1px solid var(--line); max-height: 45vh; grid-column: 1; grid-row: 3; }
-  .vsplit, .icon-only, .layouts { display: none; }
+  .vsplit, .layouts { display: none; }
   .splitter { grid-row: 4; }
   .dock { grid-row: 5; }
   .filter { width: 160px; }
