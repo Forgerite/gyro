@@ -24,7 +24,7 @@
     </label>
     <span class="spacer"></span>
     @if (api.error(); as err) { <span class="error" role="alert">{{ err }}</span> }
-    <button type="button" class="btn ghost sm" (click)="manageNox()" [attr.aria-pressed]="nox.managing()" title="Add and check the Nox Lumos servers projects can link to">
+    <button type="button" class="btn secondary sm" (click)="manageNox()" [attr.aria-pressed]="nox.managing()" title="Add and check the Nox Lumos servers projects can link to">
       Nox Lumos
     </button>
     <button type="button" class="btn secondary sm" (click)="startCreating()" [attr.aria-pressed]="creating()" title="Start a new git repository in the code folder">
@@ -39,27 +39,13 @@
         </button>
       }
     </div>
-    <button type="button" class="btn ghost sm icon-only" (click)="toggleWide()" [attr.aria-pressed]="detailWide()"
-            [attr.aria-label]="(detailWide() ? 'Contract' : 'Expand') + ' the detail panel'" aria-keyshortcuts="e"
-            [title]="(detailWide() ? 'Contract' : 'Expand') + ' the detail panel (e)'">
-      <svg viewBox="0 0 16 16" aria-hidden="true">
-        @if (detailWide()) { <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" /> } @else { <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" /> }
-      </svg>
+    <button type="button" class="btn secondary sm" (click)="showKeys.set(true)" aria-haspopup="dialog" aria-keyshortcuts="?" title="Keyboard shortcuts (?)">
+      Shortcuts <kbd aria-hidden="true">?</kbd>
     </button>
   </header>
+  <app-shortcuts-dialog [(open)]="showKeys" />
 
   <main class="grid" aria-label="Workspaces">
-    @if (waitingRows().length) {
-      <div class="needs" role="group" aria-label="Waiting on you">
-        <span class="needs-h"><span class="ring waiting" aria-hidden="true"></span>{{ waitingRows().length }} waiting on you</span>
-        @for (r of waitingRows(); track r.wt.path; let i = $index) {
-          <button type="button" class="jump" (click)="jumpTo(i)" [attr.aria-keyshortcuts]="'' + (i + 1)"
-                  [title]="r.ws.name + ' › ' + r.wt.name">
-            <kbd aria-hidden="true">{{ i + 1 }}</kbd>{{ r.wt.name }} <span class="j-age">{{ r.wt.lastActivity | ago: now() }}</span>
-          </button>
-        }
-      </div>
-    }
     <div class="cols">
     @for (ws of workspaces(); track ws.path) {
       <app-workspace-card
@@ -123,6 +109,8 @@
     } @else if (picked().length > 1) {
       <app-bulk-archive-panel [sessions]="picked()" [now]="now()" (remove)="unpick($event)" (clear)="multi.set([])"
                               (done)="multi.set([]); selected.set(null)" />
+    } @else if (sel?.kind === 'worktree' && sel!.wt!.gyro && sel!.wt!.git.missing) {
+      <app-gone-session-panel [ws]="sel!.ws" [wt]="sel!.wt!" [now]="now()" (up)="up()" />
     } @else if (sel?.kind === 'worktree') {
       <app-worktree-panel [ws]="sel!.ws" [wt]="sel!.wt!" [term]="selectedTerm()" [now]="now()" (open)="open($event)" (up)="up()" />
     } @else if (sel?.kind === 'session') {

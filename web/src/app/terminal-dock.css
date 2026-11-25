@@ -117,10 +117,14 @@
 .dot.busy { background: var(--term-cyan); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.35; } }
 
-.psplit { position: relative; cursor: col-resize; touch-action: none; background: linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat, var(--ground-0); }
-.psplit::after { content: ''; position: absolute; top: 50%; left: 0; width: 5px; height: 28px; margin-top: -14px; border-radius: var(--radius-pill); background: var(--line-strong); }
-.psplit:hover::after, .psplit:focus-visible::after { background: var(--ink); }
+/* Same look as the app's splitters: one clear hairline, a grip, a hit area 3px past each side. */
+.psplit { --split-line: color-mix(in srgb, var(--line-strong) 60%, var(--ground-0)); position: relative; z-index: 1; cursor: col-resize; touch-action: none; background: linear-gradient(var(--split-line), var(--split-line)) center / 1px 100% no-repeat, var(--ground-0); transition: background-color .12s; }
+.psplit::before { content: ''; position: absolute; inset: 0 -3px; }
+.psplit::after { content: ''; position: absolute; top: 50%; left: 1px; width: 3px; height: 40px; margin-top: -20px; border-radius: var(--radius-pill); background: var(--ink-3); transition: background-color .12s; }
+.psplit:hover, .psplit:active, .psplit:focus-visible { --split-line: var(--ink-3); background-color: var(--ground-3); }
+.psplit:hover::after, .psplit:active::after, .psplit:focus-visible::after { background: var(--ink); }
 .psplit:focus-visible { outline: none; }
+@media (prefers-reduced-motion: reduce) { .psplit, .psplit::after { transition: none; } }
 
 .toggle { all: unset; cursor: pointer; padding: 0 var(--space-2); height: 24px; display: inline-flex; align-items: center; border-radius: var(--radius-sm); color: var(--ink-3); align-self: center; white-space: nowrap; font-size: 12px; font-weight: 500; }
 .toggle[aria-pressed='true'] { background: var(--ground-2); }

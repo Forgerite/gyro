@@ -3,11 +3,12 @@ import { AgoPipe } from './ago.pipe';
 import { DashboardService } from './dashboard.service';
 import { WtFlags } from './wt-flags';
 import { StageStrip } from './stage-track';
-import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessionState } from './model';
+import { NgTemplateOutlet } from '@angular/common';
+import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, externalHolds, sessionState, splitWorktrees } from './model';
 
 @Component({
   selector: 'app-workspace-card',
-  imports: [AgoPipe, WtFlags, StageStrip],
+  imports: [AgoPipe, WtFlags, StageStrip, NgTemplateOutlet],
   template: `
     <header>
       <button
@@ -20,10 +21,11 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessio
       >
         <h2>{{ ws().name }}</h2>
       </button>
-      @if (!ws().closed && (counts().waiting || ws().worktrees.length)) {
+      @let gyroCount = rows().sessions.length - (rows().sessions[0]?.isMain ? 1 : 0);
+      @if (!ws().closed && (counts().waiting || gyroCount)) {
         <span class="counts">
           @if (counts().waiting) { <span class="count signal" [title]="counts().waiting + ' waiting on you'">{{ counts().waiting }}</span> }
-          <span class="count" [title]="ws().worktrees.length + ' worktree' + (ws().worktrees.length === 1 ? '' : 's')">{{ ws().worktrees.length }}</span>
+          @if (gyroCount) { <span class="count" [title]="gyroCount + ' Gyro session' + (gyroCount === 1 ? '' : 's')">{{ gyroCount }}</span> }
         </span>
       }
       @if (ws().closed) {
@@ -39,80 +41,107 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessio
       <span class="age">{{ ws().lastActivity | ago: now() }}</span>
     </header>
     @if (!ws().closed) {
-    <ul>
-      @for (wt of ws().worktrees; track wt.path) {
-        @let s = wt.sessions[0];
-        @let state = stateOf(wt);
-        <li>
-          @let what = whatOf(wt, state);
-          <button
-            type="button"
-            [id]="'wt-' + wt.path"
-            [class]="'row wt-row ' + state"
-            [class.live]="!!s?.live"
-            [class.selected]="isSel('worktree', wt.path)"
-            [attr.aria-pressed]="isSel('worktree', wt.path)"
-            (click)="select.emit(wt.path)"
-            (dblclick)="activate.emit(wt.path)"
-          >
-            <span class="dot" role="img" [attr.aria-label]="wtLabel(wt)"></span>
-            <span class="name" [title]="wt.path">
-              <b>{{ wt.name }}</b>
-              @if (wt.branch && wt.branch !== wt.name) { <span class="branch">{{ wt.branch }}</span> }
-              @if (wt.detached) { <span class="branch">&#64;{{ wt.head }}</span> }
-            </span>
-            <span class="right">
-              @if (wt.work?.plan; as plan) { <app-stage-strip [plan]="plan" /> }
-              @if (stageChip(wt); as stage) {
-                <span class="stagechip" [class.land]="stage === 'ready to land'" [title]="'Session is ' + stage">{{ stage }}</span>
-              }
+    <ng-template #wtRow let-wt let-tag="tag">
+      @let s = wt.sessions[0];
+      @let state = stateOf(wt);
+      @let what = whatOf(wt, state);
+      <li>
+        <button
+          type="button"
+          [id]="'wt-' + wt.path"
+          [class]="'row wt-row ' + state"
+          [class.live]="!!s?.live"
+          [class.gone]="!!wt.git.missing"
+          [class.selected]="isSel('worktree', wt.path)"
+          [attr.aria-pressed]="isSel('worktree', wt.path)"
+          (click)="select.emit(wt.path)"
+          (dblclick)="activate.emit(wt.path)"
+        >
+          <span class="dot" role="img" [attr.aria-label]="wtLabel(wt)"></span>
+          <span class="name" [title]="wt.path">
+            <b>{{ wt.name }}</b>
+            @if (wt.branch && wt.branch !== wt.name) { <span class="branch">{{ wt.branch }}</span> }
+            @if (wt.detached) { <span class="branch">&#64;{{ wt.head }}</span> }
+            @if (tag) { <span class="src">{{ tag }}</span> }
+          </span>
+          <span class="right">
+            @if (wt.work?.plan; as plan) { <app-stage-strip [plan]="plan" /> }
+            @if (stageChip(wt); as stage) {
+              <span class="stagechip" [class.land]="stage === 'ready to land'" [title]="'Session is ' + stage">{{ stage }}</span>
+            }
+            @if (wt.git.missing && wt.gyro) {
+              <span class="stagechip gone" title="This Gyro session's worktree folder is gone">worktree removed</span>
+            } @else {
               <app-wt-flags [git]="wt.git" [pr]="wt.pr" />
-              @if (liveIn(wt) > 1) { <span class="multi" title="More than one live session in this worktree">×{{ liveIn(wt) }}</span> }
-            </span>
-            <span class="age">{{ wt.lastActivity | ago: now() }}</span>
-            @if (what.text) { <span class="what" [class]="'what ' + what.kind">{{ what.text }}</span> }
-          </button>
-        </li>
+            }
+            @if (liveIn(wt) > 1) { <span class="multi" title="More than one live session in this worktree">×{{ liveIn(wt) }}</span> }
+          </span>
+          <span class="age">{{ wt.lastActivity | ago: now() }}</span>
+          @if (what.text) { <span class="what" [class]="'what ' + what.kind">{{ what.text }}</span> }
+        </button>
+      </li>
+    </ng-template>
+    <ul>
+      @for (wt of rows().sessions; track wt.path) {
+        <ng-container [ngTemplateOutlet]="wtRow" [ngTemplateOutletContext]="{ $implicit: wt, tag: null }" />
       }
     </ul>
-    @if (looseShown().length || looseOlder()) {
-      <div class="loose" role="group" [attr.aria-label]="'Loose sessions in ' + ws().name">
+    @if (externalCount()) {
+      <div class="external" role="group" [attr.aria-label]="'External in ' + ws().name">
         <h3>
-          <span title="Sessions from worktrees of this project that have since been removed. Ctrl+click or Space to multi-select, Shift+click for a range.">Loose sessions</span>
-          <button type="button" class="more pick-all" (click)="pickSessions.emit(pickable())" [disabled]="!pickable().length"
-                  title="Select every loose session listed here (running ones excluded)">select all</button>
-        </h3>
-        <ul>
-          @for (s of looseShown(); track s.id) {
-            @let state = looseStateOf(s);
-            <li>
-              <button
-                type="button"
-                [id]="'ls-' + s.id"
-                [class]="'row loose-row ' + state"
-                [class.live]="!!s.live"
-                [class.selected]="isSel('session', s.id)"
-                [class.picked]="multi().includes(s.id)"
-                [attr.aria-pressed]="isSel('session', s.id) || multi().includes(s.id)"
-                (mousedown)="$event.shiftKey && $event.preventDefault()"
-                (click)="pick($event, s.id)"
-                (keydown.space)="$event.preventDefault(); pickSession.emit({ id: s.id, mode: 'toggle', order: order() })"
-                (dblclick)="activateSession.emit(s.id)"
-              >
-                <span class="dot" role="img" [attr.aria-label]="looseLabel(s)"></span>
-                <span class="name" [title]="(s.cwd ?? '') + (s.folderExists ? '' : ' (folder removed)')">{{ s.worktreeName }}</span>
-                <span></span>
-                <span class="title">{{ s.title ?? s.id.slice(0, 8) }}</span>
-                <span></span>
-                <span class="age">{{ s.lastActivity | ago: now() }}</span>
-              </button>
-            </li>
-          }
-        </ul>
-        @if (looseOlder()) {
-          <button type="button" class="more" [attr.aria-expanded]="showOlder()" (click)="showOlder.set(!showOlder())">
-            {{ showOlder() ? 'hide older' : '+' + looseOlder() + ' older' }}
+          <button type="button" class="ext-toggle" [attr.aria-expanded]="externalShown()" (click)="toggleExternal()"
+                  title="Worktrees and Claude sessions that aren't part of a Gyro session">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+            External <span class="ext-count">{{ externalCount() }}</span>
           </button>
+          @if (externalWaiting()) {
+            <span class="count signal" [title]="externalWaiting() + ' waiting on you'">{{ externalWaiting() }}</span>
+          }
+          @if (externalShown() && looseShown().length) {
+            <button type="button" class="more pick-all" (click)="pickSessions.emit(pickable())" [disabled]="!pickable().length"
+                    title="Select every Claude session listed here (running ones excluded). Ctrl+click or Space to multi-select, Shift+click for a range.">select all</button>
+          }
+        </h3>
+        @if (externalShown()) {
+          @if (rows().external.length) {
+            <ul>
+              @for (wt of rows().external; track wt.path) {
+                <ng-container [ngTemplateOutlet]="wtRow" [ngTemplateOutletContext]="{ $implicit: wt, tag: 'worktree' }" />
+              }
+            </ul>
+          }
+          <ul>
+            @for (s of looseShown(); track s.id) {
+              @let state = looseStateOf(s);
+              <li>
+                <button
+                  type="button"
+                  [id]="'ls-' + s.id"
+                  [class]="'row loose-row ' + state"
+                  [class.live]="!!s.live"
+                  [class.selected]="isSel('session', s.id)"
+                  [class.picked]="multi().includes(s.id)"
+                  [attr.aria-pressed]="isSel('session', s.id) || multi().includes(s.id)"
+                  (mousedown)="$event.shiftKey && $event.preventDefault()"
+                  (click)="pick($event, s.id)"
+                  (keydown.space)="$event.preventDefault(); pickSession.emit({ id: s.id, mode: 'toggle', order: order() })"
+                  (dblclick)="activateSession.emit(s.id)"
+                >
+                  <span class="dot" role="img" [attr.aria-label]="looseLabel(s)"></span>
+                  <span class="name" [title]="(s.cwd ?? '') + (s.folderExists ? '' : ' (folder removed)')">{{ s.worktreeName }}</span>
+                  <span class="src" title="A Claude session whose worktree is gone, not part of a Gyro session">claude</span>
+                  <span class="title">{{ s.title ?? s.id.slice(0, 8) }}</span>
+                  <span></span>
+                  <span class="age">{{ s.lastActivity | ago: now() }}</span>
+                </button>
+              </li>
+            }
+          </ul>
+          @if (looseOlder()) {
+            <button type="button" class="more" [attr.aria-expanded]="showOlder()" (click)="showOlder.set(!showOlder())">
+              {{ showOlder() ? 'hide older' : '+' + looseOlder() + ' older Claude session' + (looseOlder() === 1 ? '' : 's') }}
+            </button>
+          }
         }
       </div>
     }
@@ -177,6 +206,24 @@ export class WorkspaceCard {
   readonly activateSession = output<string>();
   /** true = close the project, false = reopen it. */
   readonly closeProject = output<boolean>();
+
+  /** Gyro sessions (and the main checkout) above; worktrees with no Gyro session go under External. */
+  protected readonly rows = computed(() => splitWorktrees(this.ws()));
+
+  /** External is collapsed unless opened (remembered per project) or holding the selection. */
+  protected readonly externalShown = computed(
+    () => this.api.externalOpen().has(this.ws().path) || externalHolds(this.ws(), this.selected()),
+  );
+  protected readonly externalCount = computed(() => this.rows().external.length + this.ws().loose.length);
+  /** Waiting entries inside External, shown on its header so a collapsed one doesn't hide them. */
+  protected readonly externalWaiting = computed(
+    () => this.rows().external.filter((wt) => this.stateOf(wt) === 'waiting').length +
+      this.ws().loose.filter((s) => this.looseStateOf(s) === 'waiting').length,
+  );
+
+  protected toggleExternal() {
+    this.api.toggleExternal(this.ws().path);
+  }
 
   /** Older loose sessions are tucked away unless asked for (or one of them is selected). */
   protected readonly showOlder = signal(false);

@@ -10,6 +10,7 @@ const POLL_MS = 3000;
  */
 const HIDDEN_POLL_MS = 30_000;
 const PANEL_TAB_KEY = 'gyro.panelTab';
+const EXTERNAL_OPEN_KEY = 'gyro.externalOpen';
 const DIFF_MODE_KEY = 'gyro.diffMode';
 const DOCK_OPEN_KEY = 'gyro.dockOpen';
 const QUICK_LAYOUT_KEY = 'gyro.quickLayout';
@@ -129,6 +130,21 @@ export class DashboardService {
   setPanelTab(tab: PanelTab): void {
     this.panelTab.set(tab);
     try { localStorage.setItem(PANEL_TAB_KEY, tab); } catch { /* storage unavailable */ }
+  }
+
+  /** Projects whose External section is open (collapsed by default), remembered across reloads. */
+  readonly externalOpen = signal<ReadonlySet<string>>(new Set(loadList(EXTERNAL_OPEN_KEY)));
+
+  toggleExternal(path: string): void {
+    const next = new Set(this.externalOpen());
+    if (!next.delete(path)) next.add(path);
+    this.externalOpen.set(next);
+    save(EXTERNAL_OPEN_KEY, JSON.stringify([...next]));
+  }
+
+  /** Mark a Gyro session done whose worktree is already gone (the server refuses while it exists). */
+  markSessionDone(path: string) {
+    return this.http.post<WorkView>('/api/work/done', { path });
   }
 
   /** Bumped whenever terminals change locally, so slower in-flight snapshots don't resurrect old ones. */
@@ -388,6 +404,8 @@ export class DashboardService {
 
   /** A worktree tile's colour: a smart feature, a session still booting in the dock or the PR's CI running counts as working. */
   worktreeState(wt: Worktree): State {
+    // A Gyro session whose worktree is gone can't be worked on or wait for you; its row says so instead.
+    if (wt.git.missing) return 'none';
     if (this.smartBusy(wt.path)) return 'busy';
     const st = this.starting()[wt.path];
     if (st && !st.failed) return 'busy';
@@ -513,6 +531,15 @@ export interface Starting {
 function loadQuickLayout(): QuickLayout | null {
   const v = load(QUICK_LAYOUT_KEY);
   return v && QUICK_LAYOUTS.includes(v) ? (v as QuickLayout) : null;
+}
+
+function loadList(key: string): string[] {
+  try {
+    const v: unknown = JSON.parse(load(key) ?? '[]');
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 function load(key: string): string | null {

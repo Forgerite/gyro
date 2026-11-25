@@ -65,6 +65,11 @@ export interface Worktree {
   lastActivity: number;
   /** Its work session (the persistent unit of work; null for main/detached/prunable worktrees). */
   work?: WorkView | null;
+  /**
+   * A Gyro session: an active work session Gyro created owns this worktree. Worktrees made outside Gyro
+   * (and the main checkout) aren't. A Gyro session whose folder is gone still has a row, with git.missing.
+   */
+  gyro?: boolean;
 }
 
 /** A worktree's work session, with its live plan and the latest macro run. */
@@ -490,6 +495,28 @@ export interface Selection {
   path: string;
   /** For a ticket: its project, so the panel stays put once the ticket leaves Lumos's stages. */
   project?: string;
+}
+
+/**
+ * A project's rows, as its card lists them: `sessions` is the main checkout, then each Gyro session
+ * (newest first, ones whose worktree is gone last); `external` is every worktree with no Gyro session.
+ * Loose Claude sessions are External too (ws.loose).
+ */
+export function splitWorktrees(ws: Workspace): { sessions: Worktree[]; external: Worktree[] } {
+  const gyro = ws.worktrees
+    .filter((wt) => wt.gyro && !wt.isMain)
+    .sort((a, b) => Number(!!a.git.missing) - Number(!!b.git.missing) || b.lastActivity - a.lastActivity);
+  return {
+    sessions: [...ws.worktrees.filter((wt) => wt.isMain), ...gyro],
+    external: ws.worktrees.filter((wt) => !wt.gyro && !wt.isMain),
+  };
+}
+
+/** The selection is one of the project's External entries: its section opens to show it. */
+export function externalHolds(ws: Workspace, sel: Selection | null): boolean {
+  if (sel?.kind === 'session') return ws.loose.some((s) => s.id === sel.path);
+  if (sel?.kind === 'worktree') return ws.worktrees.some((wt) => wt.path === sel.path && !wt.gyro && !wt.isMain);
+  return false;
 }
 
 /** Loose sessions: live or recent ones show on the tile; older ones sit behind "+N older". */

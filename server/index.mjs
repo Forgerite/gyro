@@ -84,10 +84,60 @@ async function snapshot() {
   const workspaces = snap.workspaces.map((ws) => {
     const g = withGithub({ ...ws, gyro: gyro.get(norm(ws.path)) ?? null, worktrees: ws.worktrees.map((wt) => ({ ...wt, ports: portsOf(wt.path) })), closed: isClosed(ws.path), dev: { command: getDev(ws.path) ?? null, detected: detectDev(ws.path) }, base: baseSetting(ws) });
     autoLinkNox(g);
-    return { ...g, nox: withNox(g), worktrees: g.worktrees.map((wt) => ({ ...wt, work: workView(wt, g, work) })) };
+    return withGyroSessions({ ...g, nox: withNox(g), worktrees: g.worktrees.map((wt) => ({ ...wt, work: workView(wt, g, work) })) }, work);
   });
   pushSessionBases();
   return { ...snap, workspaces, terms: listTerms() };
+}
+
+/** Live and working first, then live, then the rest; newest first within each (as the scanner orders a worktree's sessions). */
+const sessionRank = (s) => (s.live?.status === 'busy' || s.live?.status === 'shell' || s.live?.background ? 2 : s.live ? 1 : 0);
+
+/**
+ * A project's sessions come from Gyro's ledger, not from git: every active work session Gyro created
+ * (origin 'wizard') is one, marked `gyro`, with its worktree and Claude conversations as properties.
+ * - Its worktree is the scanned one at its path; when that folder is gone it still shows, as missing.
+ * - Its conversations are the ids linked to it, wherever the scan found them (another worktree, or loose).
+ * Everything else the scan found is left as it was: the main checkout, worktrees with no Gyro session
+ * (made outside Gyro; their backfilled rows don't count) and loose Claude sessions. The dashboard shows
+ * those last two under External.
+ */
+function withGyroSessions(ws, work) {
+  const root = norm(ws.path);
+  const rows = [...work.values()].filter(({ session: s }) => s.status === 'active' && s.origin === 'wizard' && norm(s.repo) === root);
+  if (!rows.length) return ws;
+  const ownerOf = new Map(); // conversation id -> norm(path) of the Gyro session it's linked to
+  for (const { session: s } of rows) for (const id of s.conversations) ownerOf.set(id, norm(s.path));
+  const claimed = new Map(); // norm(path) -> conversations moved to that session
+  const keep = (list, key) => list.filter((s) => {
+    const owner = ownerOf.get(s.id);
+    if (!owner || owner === key) return true;
+    if (!claimed.has(owner)) claimed.set(owner, []);
+    claimed.get(owner).push(s);
+    return false;
+  });
+  const worktrees = ws.worktrees.map((wt) => ({ ...wt, sessions: keep(wt.sessions, norm(wt.path)) }));
+  const loose = keep(ws.loose, null);
+  const byPath = new Map(worktrees.map((wt) => [norm(wt.path), wt]));
+  for (const { session: s, macro } of rows) {
+    const key = norm(s.path);
+    let wt = byPath.get(key);
+    if (!wt) {
+      wt = {
+        path: s.path, head: null, branch: s.branch, detached: false, bare: false, prunable: false, isMain: false,
+        name: basename(s.path), git: { missing: true }, sessions: [], lastActivity: s.updatedAt, ports: null, pr: null,
+        work: { session: s, macro, plan: null },
+      };
+      worktrees.push(wt);
+    }
+    wt.gyro = true;
+    const extra = claimed.get(key) ?? [];
+    if (extra.length) {
+      wt.sessions = [...wt.sessions, ...extra].sort((a, b) => sessionRank(b) - sessionRank(a) || b.lastActivity - a.lastActivity);
+      wt.lastActivity = Math.max(wt.lastActivity ?? 0, wt.sessions[0].lastActivity);
+    }
+  }
+  return { ...ws, worktrees, loose };
 }
 
 /** The project's base branch: set here (ref), else the detected trunk; missing is a set one that no longer resolves. */
@@ -1152,6 +1202,15 @@ const server = createServer(async (req, res) => {
         }
         if (CAPTURE_STEPS.has(step) && claudeWorking(found)) return send(res, 409, { error: 'Claude is still working here; wait until it finishes' });
         return send(res, 200, startWorkMacro(found, `step:${step}`, { ack, deleteRemote }));
+      }
+      if (req.url === '/api/work/done') {
+        // Ends a Gyro session whose worktree is already gone (removed outside Gyro); a live one ends through Land.
+        const { path } = await readJson(req);
+        const { session } = workOf(path ?? '');
+        if (!session || session.status !== 'active') return send(res, 400, { error: 'No active Gyro session there' });
+        if (await knownWorktree(path)) return send(res, 409, { error: 'Its worktree still exists: land the session, or remove the worktree first' });
+        setWorkStatus(path, 'done');
+        return send(res, 200, workOf(path));
       }
       if (req.url === '/api/work/ship') {
         const found = await knownWorktree((await readJson(req)).path);
