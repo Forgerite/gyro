@@ -26,6 +26,7 @@ const clampSplit = (f: number) => Math.min(0.8, Math.max(0.2, f));
   imports: [TerminalView, PreviewPane],
   template: `
     <div class="tabs" role="tablist" aria-label="Terminals">
+      <span class="qlabel" aria-hidden="true">Terminal</span>
       @for (t of tabs(); track t.path) {
         <div class="tab" [class]="'tab ' + t.state" [class.on]="t.path === active()" [class.exited]="t.exited">
           <button type="button" role="tab" [attr.aria-selected]="t.path === active()" (click)="pick.emit(t.path)">
@@ -39,7 +40,7 @@ const clampSplit = (f: number) => Math.min(0.8, Math.max(0.2, f));
       @if (current()) {
         <button type="button" class="toggle" [attr.aria-pressed]="previewOn()" (click)="togglePreview()" title="Show or hide the app preview and test report">Preview</button>
       }
-      <span class="hint"><kbd>Ctrl</kbd>+<kbd>\`</kbd> toggle terminal</span>
+      <span class="hint" title="Toggle the terminal"><kbd>⌃\`</kbd></span>
       <button type="button" class="chev" (click)="api.setDockOpen(!api.dockOpen())" [attr.aria-expanded]="api.dockOpen()"
               [attr.aria-label]="api.dockOpen() ? 'Collapse terminal' : 'Expand terminal'">{{ api.dockOpen() ? '▾' : '▴' }}</button>
     </div>

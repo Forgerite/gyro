@@ -51,7 +51,7 @@ export class TerminalView {
       cursorBlink: true,
       scrollback: 5000,
       allowProposedApi: true,
-      theme: { background: v('--term-bg'), foreground: v('--term-fg'), cursor: v('--accent'), selectionBackground: v('--selected') },
+      theme: { background: v('--term-bg'), foreground: v('--term-fg'), cursor: v('--term-fg'), selectionBackground: 'rgba(217, 213, 205, 0.25)' },
     });
     this.term.loadAddon(this.fit);
     this.term.loadAddon(new WebLinksAddon());

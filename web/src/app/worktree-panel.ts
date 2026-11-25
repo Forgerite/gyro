@@ -26,19 +26,29 @@ export type OpenRequest = {
   template: `
     @let w = wt();
     <header>
-      <h2>
+      <nav class="crumb" aria-label="Breadcrumb">
         <button type="button" class="link up" (click)="up.emit()" title="Back to project (u)">{{ ws().name }}</button>
-        <span class="sep" aria-hidden="true">›</span>
-        <span class="title">{{ w.name }} @if (w.branch && w.branch !== w.name) { <span class="branch">{{ w.branch }}</span> }</span>
+        <span aria-hidden="true">›</span><span>worktree</span>
+      </nav>
+      <div class="head">
+        <span class="ring lg" [class]="'ring lg ' + ring()" role="img" [attr.aria-label]="ringLabel()"></span>
+        <h2>{{ w.name }}</h2>
+        @if (w.branch) { <span class="branch">{{ w.branch }}@if (w.work?.session?.base; as base) { → {{ base }} }</span> }
         <span class="acts">
-          <button type="button" class="act" (click)="open.emit({ action: 'code' })" title="Open in VS Code (c)">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4" /></svg>VS Code
+          <button type="button" class="btn ghost sm" (click)="open.emit({ action: 'code' })" title="Open in VS Code (c)" aria-label="Open in VS Code" aria-keyshortcuts="c">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4" /></svg>
           </button>
-          <button type="button" class="act" (click)="open.emit({ action: 'explorer' })" [title]="'Open folder: ' + w.path">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4.5v8h13v-6.5h-6.5l-1.5-1.5z" /></svg>Folder
+          <button type="button" class="btn ghost sm" (click)="open.emit({ action: 'explorer' })" [title]="'Open folder: ' + w.path" aria-label="Open folder">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4.5v8h13v-6.5h-6.5l-1.5-1.5z" /></svg>
           </button>
         </span>
-      </h2>
+      </div>
+      <div class="facts-row">
+        <app-wt-flags [git]="w.git" [pr]="w.pr" />
+        @if (w.git.upstream; as u) { @if (u.ahead || u.behind) { <span class="chip" [title]="u.ahead + ' to push, ' + u.behind + ' to pull'">↑{{ u.ahead }} ↓{{ u.behind }}</span> } }
+        @if (w.ports; as p) { <span class="chip outline" title="This worktree's port block">ports {{ p.base }}–{{ p.base + p.count - 1 }}</span> }
+        @if (w.work?.session?.issue; as n) { <span class="chip outline">issue #{{ n }}</span> }
+      </div>
     </header>
 
     <div class="tabs" role="tablist" aria-label="Worktree views">
@@ -281,6 +291,21 @@ export class WorktreePanel {
     if (state === 'busy') return 'Claude is working';
     return s.live ? 'Waiting on you' : 'Waiting on you · not running';
   }
+
+  /** The title's StateRing: waiting and working first, then failing, then ready, else idle. */
+  protected readonly ring = computed(() => {
+    const w = this.wt();
+    const state = this.api.worktreeState(w);
+    if (state === 'busy') return 'working';
+    if (state === 'waiting') return 'waiting';
+    if (w.pr?.checks === 'fail' || w.work?.plan?.badges.includes('blocked')) return 'failing';
+    const stage = w.work?.plan?.stage;
+    if (stage === 'ready-to-ship' || stage === 'ready-to-land' || stage === 'done') return 'ready';
+    return 'idle';
+  });
+  protected readonly ringLabel = computed(() => ({
+    working: 'Claude is working', waiting: 'Waiting on you', failing: 'Failing or blocked', ready: 'Ready', idle: 'Idle',
+  })[this.ring()]);
 
   protected copy(s: Session) {
     navigator.clipboard?.writeText(s.id);
