@@ -2,11 +2,12 @@ import { Component, computed, inject, input, output, signal } from '@angular/cor
 import { AgoPipe } from './ago.pipe';
 import { DashboardService } from './dashboard.service';
 import { WtFlags } from './wt-flags';
+import { StageStrip } from './stage-track';
 import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessionState } from './model';
 
 @Component({
   selector: 'app-workspace-card',
-  imports: [AgoPipe, WtFlags],
+  imports: [AgoPipe, WtFlags, StageStrip],
   template: `
     <header>
       <button
@@ -19,6 +20,12 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessio
       >
         <h2>{{ ws().name }}</h2>
       </button>
+      @if (!ws().closed && (counts().waiting || ws().worktrees.length)) {
+        <span class="counts">
+          @if (counts().waiting) { <span class="count signal" [title]="counts().waiting + ' waiting on you'">{{ counts().waiting }}</span> }
+          <span class="count" [title]="ws().worktrees.length + ' worktree' + (ws().worktrees.length === 1 ? '' : 's')">{{ ws().worktrees.length }}</span>
+        </span>
+      }
       @if (ws().closed) {
         <span class="closed-tag">closed</span>
         <button type="button" class="hdr-act" (click)="closeProject.emit(false)" [attr.aria-label]="'Reopen ' + ws().name"
@@ -37,10 +44,11 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessio
         @let s = wt.sessions[0];
         @let state = stateOf(wt);
         <li>
+          @let what = whatOf(wt, state);
           <button
             type="button"
             [id]="'wt-' + wt.path"
-            [class]="'row ' + state"
+            [class]="'row wt-row ' + state"
             [class.live]="!!s?.live"
             [class.selected]="isSel('worktree', wt.path)"
             [attr.aria-pressed]="isSel('worktree', wt.path)"
@@ -49,17 +57,20 @@ import { LOOSE_RECENT_MS, Selection, Session, State, Workspace, Worktree, sessio
           >
             <span class="dot" role="img" [attr.aria-label]="wtLabel(wt)"></span>
             <span class="name" [title]="wt.path">
-              {{ wt.name }}
+              <b>{{ wt.name }}</b>
               @if (wt.branch && wt.branch !== wt.name) { <span class="branch">{{ wt.branch }}</span> }
               @if (wt.detached) { <span class="branch">&#64;{{ wt.head }}</span> }
             </span>
-            <app-wt-flags [git]="wt.git" [pr]="wt.pr" compact />
-            @if (stageChip(wt); as stage) {
-              <span class="stagechip" [class.land]="stage === 'ready to land'" [title]="'Session is ' + stage">{{ stage }}</span>
-            }
-            <span class="title">{{ s?.title ?? wt.git.lastCommitSubject ?? '' }}</span>
-            <span class="multi">@if (liveIn(wt) > 1) { <span title="More than one live session in this worktree">×{{ liveIn(wt) }}</span> }</span>
+            <span class="right">
+              @if (wt.work?.plan; as plan) { <app-stage-strip [plan]="plan" /> }
+              @if (stageChip(wt); as stage) {
+                <span class="stagechip" [class.land]="stage === 'ready to land'" [title]="'Session is ' + stage">{{ stage }}</span>
+              }
+              <app-wt-flags [git]="wt.git" [pr]="wt.pr" />
+              @if (liveIn(wt) > 1) { <span class="multi" title="More than one live session in this worktree">×{{ liveIn(wt) }}</span> }
+            </span>
             <span class="age">{{ wt.lastActivity | ago: now() }}</span>
+            @if (what.text) { <span class="what" [class]="'what ' + what.kind">{{ what.text }}</span> }
           </button>
         </li>
       }
@@ -211,6 +222,14 @@ export class WorkspaceCard {
     return sel?.kind === kind && sel.path === path;
   }
 
+  /** The row's second line: Claude's question while it waits on you, the live tool while it works, else the title. */
+  protected whatOf(wt: Worktree, state: State): { kind: 'ask' | 'live' | 'title'; text: string } {
+    const s = wt.sessions[0];
+    if (state === 'waiting' && s?.lastAssistant) return { kind: 'ask', text: lastLine(s.lastAssistant) };
+    if (state === 'busy' && s?.lastTool) return { kind: 'live', text: '▸ ' + s.lastTool };
+    return { kind: 'title', text: s?.title ?? wt.git.lastCommitSubject ?? '' };
+  }
+
   protected liveIn(wt: Worktree) {
     return wt.sessions.filter((s) => s.live).length;
   }
@@ -255,4 +274,10 @@ export interface SessionPick {
   mode: 'single' | 'toggle' | 'range';
   /** The card's loose rows in display order. */
   order: string[];
+}
+
+/** The last non-empty line of a message, where a question to the user usually sits. */
+function lastLine(text: string): string {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  return (lines.at(-1) ?? '').replace(/^[#>*\-\s]+/, '').slice(0, 240);
 }

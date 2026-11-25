@@ -1,16 +1,16 @@
-:host { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel-2); }
-.bar { display: flex; align-items: center; gap: 2px; padding: 3px 6px; border-bottom: 1px solid var(--border); flex: none; }
+:host { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--ground-1); }
+.bar { display: flex; align-items: center; gap: var(--space-1); height: 36px; padding: 0 var(--space-3); border-bottom: 1px solid var(--line); background: var(--ground-1); flex: none; }
 .addr { flex: 1; min-width: 0; display: flex; }
 input {
   flex: 1;
   min-width: 0;
-  font: inherit;
-  font-size: 11px;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 8px;
+  height: 24px;
+  font: 400 11px/1 var(--font-mono);
+  color: var(--ink-2);
+  background: var(--ground-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
 }
 input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 input::placeholder { color: var(--muted); }
@@ -65,9 +65,9 @@ iframe[hidden] { display: none; }
 .frames[hidden] { display: none; }
 
 /* App | Tests */
-.views { display: flex; flex: none; margin-right: 4px; }
-.views button { font-size: 11px; padding: 3px 8px; color: var(--muted); }
-.views button[aria-selected='true'] { color: var(--text); background: var(--selected); }
+.views { display: inline-flex; flex: none; gap: 2px; padding: 2px; margin-right: var(--space-1); border-radius: var(--radius-md); background: var(--ground-2); }
+.bar .views button { font: 500 12px/1 var(--font-sans); height: 22px; padding: 0 var(--space-2); color: var(--ink-3); border-radius: var(--radius-sm); }
+.bar .views button[aria-selected='true'] { color: var(--ink); background: var(--ground-1); box-shadow: 0 0 0 1px var(--line); }
 
 /* Test report bar */
 select {

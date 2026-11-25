@@ -1,53 +1,65 @@
 <div class="shell" [class.dock-closed]="!api.dockOpen()" [style.--dock-h.px]="api.dockOpen() ? dockHeight() : 27" [style.--detail-w]="detailWide() ? '100vw' : detailWidth() + 'px'">
   <header class="bar">
-    <h1>Gyro</h1>
-    <input
-      #filterInput
-      type="search"
-      placeholder="Filter  ( / )"
-      aria-label="Filter workspaces"
-      [value]="filter()"
-      (input)="filter.set($any($event.target).value)"
-    />
+    <h1><svg class="mark" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7.2" /><ellipse cx="9" cy="9" rx="7.2" ry="2.6" transform="rotate(-25 9 9)" /><circle class="hub" cx="9" cy="9" r="1.6" /></svg>Gyro</h1>
+    <label class="filter">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3" /></svg>
+      <input
+        #filterInput
+        type="search"
+        placeholder="Filter workspaces"
+        aria-label="Filter workspaces"
+        aria-keyshortcuts="/"
+        [value]="filter()"
+        (input)="filter.set($any($event.target).value)"
+      />
+      <kbd aria-hidden="true">/</kbd>
+    </label>
     <label class="toggle">
-      <input type="checkbox" [checked]="activeOnly()" (change)="activeOnly.set($any($event.target).checked)" />
-      Active 14d <kbd>a</kbd>
+      <input type="checkbox" class="switch" [checked]="activeOnly()" (change)="activeOnly.set($any($event.target).checked)" aria-keyshortcuts="a" />
+      Active 14d <kbd aria-hidden="true">a</kbd>
     </label>
     <label class="toggle" title="Show each project's main worktree (trunk). Hidden by default: work happens in worktrees. A main worktree with a running session always shows.">
-      <input type="checkbox" [checked]="showMain()" (change)="toggleMain()" />
-      Main <kbd>m</kbd>
+      <input type="checkbox" class="switch" [checked]="showMain()" (change)="toggleMain()" aria-keyshortcuts="m" />
+      Main <kbd aria-hidden="true">m</kbd>
     </label>
-    <button type="button" class="new-proj" (click)="startCreating()" [attr.aria-pressed]="creating()" title="Start a new git repository in the code folder">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>New project
-    </button>
-    <button type="button" class="new-proj" (click)="manageNox()" [attr.aria-pressed]="nox.managing()" title="Add and check the Nox Lumos servers projects can link to">
-      Nox Lumos
-    </button>
     <span class="spacer"></span>
     @if (api.error(); as err) { <span class="error" role="alert">{{ err }}</span> }
-    <span class="hint"><kbd>j</kbd><kbd>k</kbd> move · <kbd>↵</kbd> open/resume · <kbd>u</kbd> up · <kbd>c</kbd> code · <kbd>g</kbd> git · <kbd>p</kbd> PR</span>
-    <div class="layouts" role="group" aria-label="Quick layouts">
+    <button type="button" class="btn ghost sm" (click)="manageNox()" [attr.aria-pressed]="nox.managing()" title="Add and check the Nox Lumos servers projects can link to">
+      Nox Lumos
+    </button>
+    <button type="button" class="btn secondary sm" (click)="startCreating()" [attr.aria-pressed]="creating()" title="Start a new git repository in the code folder">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>New project
+    </button>
+    <div class="layouts" role="group" aria-label="Focus a quadrant">
       @for (l of QUICK_LAYOUTS; track l.id; let i = $index) {
         <button type="button" (click)="applyLayout(l.id)" [attr.aria-pressed]="api.quickLayout() === l.id"
                 [attr.aria-label]="'Focus ' + l.label" [attr.aria-keyshortcuts]="'Control+Shift+' + (i + 1)"
                 [title]="'Focus ' + l.label + ' (Ctrl+Shift+' + (i + 1) + ')'">
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <rect class="cell" [attr.x]="l.x" [attr.y]="l.y" width="6" height="6" />
-            <path d="M2 2h12v12H2zM8 2v12M2 8h12" />
-          </svg>
+          @for (q of QUADS; track q) { <i [class.on]="q === i"></i> }
         </button>
       }
     </div>
-    <button type="button" class="wide-btn" (click)="toggleWide()" [attr.aria-pressed]="detailWide()"
+    <button type="button" class="btn ghost sm icon-only" (click)="toggleWide()" [attr.aria-pressed]="detailWide()"
+            [attr.aria-label]="(detailWide() ? 'Contract' : 'Expand') + ' the detail panel'" aria-keyshortcuts="e"
             [title]="(detailWide() ? 'Contract' : 'Expand') + ' the detail panel (e)'">
       <svg viewBox="0 0 16 16" aria-hidden="true">
-        @if (detailWide()) { <path d="M9 3v10M3 3h10v10H3zM5.5 6.5 7 8l-1.5 1.5" /> } @else { <path d="M9 3v10M3 3h10v10H3zM6.5 6.5 5 8l1.5 1.5" /> }
+        @if (detailWide()) { <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" /> } @else { <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" /> }
       </svg>
-      {{ detailWide() ? 'Contract' : 'Expand' }}
     </button>
   </header>
 
   <main class="grid" aria-label="Workspaces">
+    @if (waitingRows().length) {
+      <div class="needs" role="group" aria-label="Waiting on you">
+        <span class="needs-h"><span class="ring waiting" aria-hidden="true"></span>{{ waitingRows().length }} waiting on you</span>
+        @for (r of waitingRows(); track r.wt.path; let i = $index) {
+          <button type="button" class="jump" (click)="jumpTo(i)" [attr.aria-keyshortcuts]="'' + (i + 1)"
+                  [title]="r.ws.name + ' › ' + r.wt.name">
+            <kbd aria-hidden="true">{{ i + 1 }}</kbd>{{ r.wt.name }} <span class="j-age">{{ r.wt.lastActivity | ago: now() }}</span>
+          </button>
+        }
+      </div>
+    }
     <div class="cols">
     @for (ws of workspaces(); track ws.path) {
       <app-workspace-card

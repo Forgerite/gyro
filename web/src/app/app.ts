@@ -18,6 +18,8 @@ import { SessionPick, WorkspaceCard } from './workspace-card';
 import { BulkArchivePanel, PickedSession } from './bulk-archive-panel';
 
 const STALE_MS = 14 * 86_400_000;
+/** The waiting band lists sessions waiting this recently (or still running). */
+const WAITING_FRESH_MS = 86_400_000;
 const DOCK_KEY = 'gyro.dockHeight';
 const MAIN_KEY = 'gyro.showMain';
 const DOCK_MIN = 120;
@@ -53,6 +55,7 @@ export class App {
   private readonly dock = viewChild.required(TerminalDock);
   private readonly ticketPanel = viewChild(NoxTicketPanel);
   protected readonly QUICK_LAYOUTS = QUICK_LAYOUTS;
+  protected readonly QUADS = [0, 1, 2, 3];
 
   protected readonly filter = signal('');
   protected readonly activeOnly = signal(false);
@@ -109,6 +112,28 @@ export class App {
       // Closed projects go to the end, keeping their relative order.
       .sort((a, b) => Number(!!a.closed) - Number(!!b.closed));
   });
+
+  /**
+   * Worktrees waiting on you right now, longest wait first: the band above the tiles, jumped to with 1–9.
+   * Only a running session or one active in the last day: a conversation left weeks ago isn't a queue.
+   */
+  protected readonly waitingRows = computed(() => {
+    const since = this.now() - WAITING_FRESH_MS;
+    return this.workspaces()
+      .filter((ws) => !ws.closed)
+      .flatMap((ws) => ws.worktrees
+        .filter((wt) => this.api.worktreeState(wt) === 'waiting' && (!!wt.sessions[0]?.live || wt.lastActivity >= since))
+        .map((wt) => ({ ws, wt })))
+      .sort((a, b) => a.wt.lastActivity - b.wt.lastActivity)
+      .slice(0, 9);
+  });
+
+  protected jumpTo(i: number) {
+    const row = this.waitingRows()[i];
+    if (!row) return;
+    this.selectWorktree(row.wt.path);
+    document.getElementById('wt-' + row.wt.path)?.focus();
+  }
 
   /** Display order for keyboard navigation: each project header, then its worktrees. */
   private readonly flat = computed<Selection[]>(() =>
@@ -548,6 +573,10 @@ export class App {
         break;
       case '/':
         this.filterInput()?.nativeElement.focus();
+        break;
+      case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
+        if (Number(e.key) > this.waitingRows().length) return;
+        this.jumpTo(Number(e.key) - 1);
         break;
       default:
         return; // not ours: leave Tab, Space, etc. to the browser

@@ -8,37 +8,32 @@
 .tabs {
   display: flex;
   align-items: stretch;
-  gap: 1px;
-  background: var(--panel-2);
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
+  height: 36px;
+  padding-left: var(--space-3);
+  background: var(--ground-1);
+  border-bottom: 1px solid var(--line);
   overflow-x: auto;
   flex: none;
 }
+.qlabel { align-self: center; margin-right: var(--space-3); font: 600 11px/14px var(--font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
 
-.tab { display: flex; align-items: center; color: var(--muted); border-right: 1px solid var(--border); }
-.tab.on { background: var(--term-bg); color: var(--term-fg); box-shadow: inset 0 2px 0 var(--accent); }
-.tab button { all: unset; cursor: pointer; padding: 4px 6px; white-space: nowrap; }
-.tab button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.tab .x { padding: 4px 8px 4px 2px; color: var(--muted); }
-.tab.on .x { color: color-mix(in srgb, var(--term-fg) 60%, transparent); }
-.tab .x:hover { color: var(--danger); }
-.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--quiet); margin-right: 6px; vertical-align: middle; }
-/* Tabs show their session's state by the dot only (red/green is reserved for the tiles): pulsing = working. */
-.tab.waiting .dot { background: currentColor; }
-.tab.busy .dot { background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: 0.35; } }
+/* Worktree tabs: mono names with a small StateRing; the current one opens into the terminal below. */
+.tab { display: flex; align-items: center; color: var(--ink-3); border-left: 1px solid var(--line); font: 400 11px/16px var(--font-mono); }
+.tab:last-of-type { border-right: 1px solid var(--line); }
+.tab.on { background: var(--term-bg); color: var(--term-fg); margin-bottom: -1px; }
+.tab button { all: unset; cursor: pointer; display: inline-flex; align-items: center; padding: 0 4px 0 var(--space-3); height: 100%; white-space: nowrap; }
+.tab button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.tab .x { padding: 0 var(--space-2) 0 4px; color: var(--ink-3); }
+.tab.on .x { color: var(--term-dim); }
+.tab .x:hover { color: var(--danger-ink); }
+.tab .dot { position: relative; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: var(--radius-pill); border: 1.5px solid var(--line-strong); box-sizing: border-box; }
+.tab.waiting .dot { border: none; background: var(--signal); }
+.tab.busy .dot { border-color: var(--line); border-top-color: var(--work); border-right-color: var(--work); animation: spin 1.1s linear infinite; }
+.tab.busy .dot::after { content: ''; position: absolute; inset: 1px; border-radius: inherit; background: var(--work); }
+.dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--term-dim); margin-right: 6px; vertical-align: middle; }
 
 .spacer { flex: 1; }
-.hint { color: var(--muted); padding: 4px 10px; white-space: nowrap; align-self: center; }
-kbd {
-  font: inherit;
-  font-size: 10px;
-  padding: 0 4px;
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
-  border-radius: 3px;
-}
+.hint { color: var(--ink-3); padding: 0 var(--space-2); white-space: nowrap; align-self: center; }
 
 .body { flex: 1; min-height: 0; position: relative; }
 .body:focus { outline: none; }
@@ -90,7 +85,7 @@ kbd {
   .spin { animation-duration: 2s; }
 }
 
-.chev { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 10px; font-size: 12px; }
+.chev { background: none; border: none; color: var(--ink-3); cursor: pointer; padding: 0 var(--space-3); font-size: 12px; }
 .chev:hover { color: var(--text); }
 .chev:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .body[hidden] { display: none; }
@@ -104,26 +99,31 @@ kbd {
 .terms { flex: 1; min-height: 0; position: relative; }
 .terms app-terminal-view[hidden] { display: none; }
 
-.panes { display: flex; align-items: stretch; flex: none; font-size: 11px; border-bottom: 1px solid color-mix(in srgb, var(--term-fg) 12%, transparent); }
-.panes button { all: unset; cursor: pointer; padding: 3px 10px; color: var(--muted); white-space: nowrap; }
+/* Panes: claude, the dev server (with its live dot), shells, +. Pills on the terminal ground. */
+.panes { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-2) var(--space-3) var(--space-1); flex: none; font: 500 11px/1 var(--font-mono); }
+.panes button { all: unset; cursor: pointer; display: inline-flex; align-items: center; height: 22px; padding: 0 var(--space-2); border-radius: var(--radius-sm); color: var(--term-dim); white-space: nowrap; }
 .panes button:hover { color: var(--term-fg); }
-.panes button[aria-selected='true'] { color: var(--term-fg); box-shadow: inset 0 -2px 0 var(--accent); }
-.panes button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.panes .sub { color: var(--muted); margin-left: 4px; }
-.panes .act { color: var(--muted); }
+.panes button[aria-selected='true'] { color: var(--term-fg); background: rgba(217, 213, 205, .14); }
+.panes button:focus-visible { outline: 2px solid var(--term-fg); outline-offset: -2px; }
+.panes .sub { color: var(--term-dim); margin-left: 4px; }
+.panes .act { color: var(--term-dim); }
 .panes .shell { display: flex; align-items: stretch; }
 .panes .shell button[role='tab'] { padding-right: 2px; }
 .panes .shell .x { padding: 3px 8px 3px 4px; }
 .panes .shell .x:hover { color: var(--danger); }
 .panes .shell.exited button[role='tab'] { text-decoration: line-through; }
 .panes .add { padding: 3px 10px; font-size: 13px; line-height: 1; }
-.dot.up { background: currentColor; }
-.dot.busy { background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+.dot.up { background: var(--term-green); }
+.dot.busy { background: var(--term-cyan); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
 
-.psplit { background: var(--border); cursor: col-resize; touch-action: none; }
-.psplit:hover, .psplit:focus-visible { background: var(--accent); outline: none; }
+.psplit { position: relative; cursor: col-resize; touch-action: none; background: linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat, var(--ground-0); }
+.psplit::after { content: ''; position: absolute; top: 50%; left: 0; width: 5px; height: 28px; margin-top: -14px; border-radius: var(--radius-pill); background: var(--line-strong); }
+.psplit:hover::after, .psplit:focus-visible::after { background: var(--ink); }
+.psplit:focus-visible { outline: none; }
 
-.toggle { all: unset; cursor: pointer; padding: 4px 10px; color: var(--muted); align-self: center; white-space: nowrap; }
+.toggle { all: unset; cursor: pointer; padding: 0 var(--space-2); height: 24px; display: inline-flex; align-items: center; border-radius: var(--radius-sm); color: var(--ink-3); align-self: center; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.toggle[aria-pressed='true'] { background: var(--ground-2); }
 .toggle:hover { color: var(--text); }
 .toggle[aria-pressed='true'] { color: var(--text); }
 .toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

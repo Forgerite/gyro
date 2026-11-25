@@ -1,20 +1,20 @@
 :host {
   display: block;
   break-inside: avoid;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-3);
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
 header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
-  background: var(--panel-2);
+  background: var(--panel);
 }
 
 .project {
@@ -26,13 +26,14 @@ header {
   padding: 1px 4px;
   margin: -1px -4px;
 }
-.project:hover h2 { color: var(--accent); }
-.project:focus-visible { outline: 2px solid var(--accent); }
-.project.selected { background: var(--selected); box-shadow: inset 2px 0 0 var(--accent); }
+.project:hover h2 { text-decoration: underline; }
+.project:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.project.selected { background: var(--selected); }
 
 h2 {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 20px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -46,55 +47,71 @@ ul { list-style: none; margin: 0; padding: 0; }
   box-sizing: border-box;
   width: 100%;
   display: grid;
-  grid-template-columns: 10px minmax(0, 0.9fr) 30px minmax(0, 1.4fr) auto 26px;
+  grid-template-columns: 12px minmax(0, 0.9fr) 30px minmax(0, 1.4fr) auto 26px;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  font-size: 12px;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 13px;
+  line-height: 18px;
   cursor: pointer;
 }
 .row:hover { background: var(--hover); }
-.row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.row.selected { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
+.row:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+
+/* Worktree rows: two lines. Ring, name and branch, plan strip and chips, age; then what's happening. */
+.wt-row { grid-template-columns: 12px minmax(min(96px, 40%), 1fr) minmax(0, max-content) 30px; column-gap: var(--space-2); row-gap: 2px; padding: 7px var(--space-3); }
+.wt-row .name { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.wt-row .name b { font-weight: 600; white-space: nowrap; color: var(--ink); }
+.wt-row .branch { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wt-row .right { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; overflow: hidden; }
+.wt-row .right > * { flex: none; }
+.what { grid-column: 2 / 4; font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.what.ask { color: var(--signal-ink); }
+.what.live { color: var(--work-ink); font: 400 11px/16px var(--font-mono); }
+.row.selected { background: var(--selected); box-shadow: inset 2px 0 0 var(--ink); }
 .row.none { color: var(--muted); }
 
-/* State backgrounds: red = waiting on you, green = Claude working. Muted text is lifted to stay legible. */
-.row.waiting { background: var(--waiting-bg); --muted: color-mix(in srgb, var(--text) 72%, transparent); }
-.row.busy { background: var(--busy-bg); --muted: color-mix(in srgb, var(--text) 72%, transparent); }
-li + li .row { border-top: 1px solid color-mix(in srgb, var(--panel) 40%, transparent); }
-.row.waiting:hover, .row.busy:hover { filter: brightness(1.12); }
-.row.waiting.selected, .row.busy.selected { box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--accent); }
+/* Only waiting gets a background: amber on screen means a human is needed. Working shows in its ring. */
+.row.waiting { background: var(--signal-soft); --muted: var(--ink-2); }
+.row.waiting.wt-row { background: none; }
+li + li .row { border-top: 1px solid var(--line); }
+.row.waiting:hover { filter: brightness(1.12); }
+.row.waiting.selected { box-shadow: inset 2px 0 0 var(--ink), inset 0 0 0 1px var(--signal); }
 
-/* Dot: solid = session process is open, ring = not running. */
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--quiet); box-sizing: border-box; }
-.busy .dot { background: var(--busy); animation: pulse 1.2s ease-in-out infinite; }
-.waiting .dot { background: transparent; border: 2px solid var(--waiting); }
-.waiting.live .dot { background: var(--waiting); }
+/* StateRing: every state has a shape. Idle = hollow ring, working = spinning cyan arc around a core,
+   waiting = amber disc (a ring when the session isn't running). */
+.dot { position: relative; width: 12px; height: 12px; border-radius: var(--radius-pill); border: 2px solid var(--line-strong); box-sizing: border-box; }
+.busy .dot { border-color: var(--line); border-top-color: var(--work); border-right-color: var(--work); animation: gyro-spin 1.1s linear infinite; }
+.busy .dot::after { content: ''; position: absolute; inset: 2px; border-radius: inherit; background: var(--work); }
+.waiting .dot { border-color: var(--signal); }
+.waiting.live .dot { border: none; background: var(--signal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 30%, transparent); }
 
-@keyframes pulse { 50% { opacity: 0.35; } }
+@keyframes gyro-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .busy .dot { animation: none; } }
 
 .name, .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.branch { color: var(--muted); font-size: 11px; margin-left: 4px; }
-.stagechip { flex: none; font-size: 10px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-2); white-space: nowrap; }
-.stagechip.land { color: var(--accent); border-color: var(--accent); }
+.loose-row .name, .nox-row .name { font-weight: 500; }
+.branch { color: var(--muted); font: 400 11px/14px var(--font-mono); margin-left: 6px; }
+.stagechip { flex: none; font: 500 11px/18px var(--font-mono); padding: 0 6px; border-radius: var(--radius-sm); background: var(--ground-2); color: var(--text-2); white-space: nowrap; }
+.stagechip.land { background: var(--go-soft); color: var(--go-ink); }
 .title { color: var(--text-2); }
-.multi { color: var(--dirty); font-size: 11px; }
-.age { color: var(--muted); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+.multi { color: var(--ink-3); font: 400 11px/16px var(--font-mono); }
+.counts { display: inline-flex; gap: var(--space-1); }
+.count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--ground-3); color: var(--ink-2); font: 600 11px/1 var(--font-mono); }
+.count.signal { background: var(--signal); color: var(--on-signal); }
+.age { color: var(--muted); font: 400 11px/16px var(--font-mono); text-align: right; }
 header .age { min-width: 24px; }
 
-/* The card takes its most urgent worktree's color: header tint plus a heavy left edge. */
-:host(.waiting) { border-color: color-mix(in srgb, var(--waiting) 55%, var(--border)); border-left: 4px solid var(--waiting); }
-:host(.waiting) header { background: var(--waiting-bg); }
-:host(.busy) { border-color: color-mix(in srgb, var(--busy) 55%, var(--border)); border-left: 4px solid var(--busy); }
-:host(.busy) header { background: var(--busy-bg); }
-:host(.waiting) header .age, :host(.busy) header .age { color: var(--text-2); }
+/* A card waiting on you gets a signal border and header; a working card stays neutral. */
+:host(.waiting) { border-color: color-mix(in srgb, var(--signal) 55%, var(--line)); }
 app-wt-flags { justify-content: flex-end; }
 
 /* Loose sessions: from worktrees that no longer exist. Quieter than worktree rows unless running. */
 .loose { border-top: 1px dashed var(--border); padding: 2px 0 3px; }
+.loose-row { grid-template-columns: 12px minmax(0, 0.9fr) 0 minmax(0, 1.4fr) 0 30px; font-size: 12px; }
 .loose h3 {
   margin: 3px 8px 1px;
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -149,8 +166,8 @@ app-wt-flags { justify-content: flex-end; }
 @media (hover: none) { .hdr-act.close { opacity: 1; } }
 
 /* Closed: just the header, neutral, at the end of the list */
-:host(.closed) { opacity: 0.75; border-style: dashed; }
-:host(.closed) header { border-bottom: none; background: var(--panel); }
+:host(.closed) { background: none; border-style: dashed; }
+:host(.closed) header { border-bottom: none; background: none; }
 :host(.closed) h2 { font-weight: 500; color: var(--text-2); }
 .closed-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 
@@ -161,7 +178,7 @@ app-wt-flags { justify-content: flex-end; }
   align-items: baseline;
   gap: 6px;
   margin: 3px 8px 1px;
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -173,8 +190,8 @@ app-wt-flags { justify-content: flex-end; }
 .nox-note { margin: 1px 8px 2px 24px; font-size: 11px; color: var(--muted); }
 .nox-row .name { font-variant-numeric: tabular-nums; }
 /* Ticket rows: number, Status chip, title + why; no git-flags column. */
-.nox-row { grid-template-columns: 10px auto auto minmax(0, 1fr) 0 26px; }
+.nox-row { grid-template-columns: 12px auto auto minmax(0, 1fr) 0 30px; font-size: 12px; }
 .nox-row .stagechip { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
 .nox-row .why { color: var(--muted); }
 /* A paused ticket isn't a closed session: a filled dot, not a ring. */
-.nox-row.waiting .dot { background: var(--waiting); border: none; }
+.nox-row.waiting .dot { background: var(--signal); border: none; }
